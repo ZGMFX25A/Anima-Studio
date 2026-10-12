@@ -229,7 +229,7 @@ function drawLlm() {
       }, llm.providers.every(isCollapsed) ? '全部展开' : '全部折叠') : null,
       el('button', { class: 'btn accent small', onclick: () => { llm.editing = 'new'; drawLlm(); } }, '＋ 添加服务商')),
     el('div', { class: 'hint' },
-      '用于「AI 填写」：根据描述自动填写提示词字段。支持 OpenAI 兼容格式与 Anthropic 格式。勾选的模型才会出现在 AI 填写中。',
+      '用于「AI 填写」：根据描述自动填写提示词字段。支持 OpenAI 兼容格式与 Anthropic 格式；每个模型首次调用时会自动选择可用的接口（Chat Completions / Responses / Messages）。勾选的模型才会出现在 AI 填写中。',
       el('br'), 'Token 保存在本机 frontend/data/settings.json（明文），所有请求由本机前端服务发出。'),
     llm.editing === 'new' ? providerCard(null) : null,
     ...llm.providers.map(providerCard),
@@ -350,6 +350,8 @@ function modelsTable(p) {
     el('div', { class: 'models-tools' }, search, el('label', {}, onlyOn, '只看已勾选')), box);
 }
 
+const PROTOCOL_TEXT = { chat: 'Chat Completions', responses: 'Responses', messages: 'Messages' };
+
 function modelRow(p, m, redraw) {
   const patch = async (data) => {
     try {
@@ -392,9 +394,11 @@ function modelRow(p, m, redraw) {
       lt.error && !ok ? el('div', {}, lt.error) : null);
   }
   const canDisable = m.thinking?.can_disable === false ? '（该模型不能关闭思考）' : '';
+  const proto = PROTOCOL_TEXT[m.protocol];
   return el('div', { class: `mrow${m.enabled ? ' on' : ''}` },
     cb,
-    el('div', { class: 'mid', title: m.id }, m.id, m.name && m.name !== m.id ? el('small', {}, m.name) : null, canDisable ? el('small', {}, canDisable) : null),
+    el('div', { class: 'mid', title: m.id }, m.id, m.name && m.name !== m.id ? el('small', {}, m.name) : null, canDisable ? el('small', {}, canDisable) : null,
+      proto ? el('small', { title: '首次调用时自动选择的接口' }, `接口：${proto}`) : null),
     el('div', {}, vSel, src ? el('div', { class: 'vsrc' }, src) : null),
     lSel, testBtn, res);
 }
