@@ -219,7 +219,17 @@ async function renderLlm() {
 
 function drawLlm() {
   const root = $('#panel-llm');
-  fill(root, 
+  // 整页重画会新建模型列表框：先记住外层和各列表框的滚动位置，画完再还原
+  const outer = root.closest('.menu-body');
+  const outerTop = outer?.scrollTop;
+  const boxTops = Object.fromEntries([...root.querySelectorAll('.models[data-pid]')].map(b => [b.dataset.pid, b.scrollTop]));
+  drawLlmContent(root);
+  root.querySelectorAll('.models[data-pid]').forEach(b => { if (boxTops[b.dataset.pid]) b.scrollTop = boxTops[b.dataset.pid]; });
+  if (outer && outerTop != null) outer.scrollTop = outerTop;
+}
+
+function drawLlmContent(root) {
+  fill(root,
     el('div', { class: 'panel-title' }, el('h2', {}, 'LLM'), el('span', { class: 'grow' }),
       llm.providers.length > 1 ? el('button', {
         class: 'btn ghost small', onclick: () => {
@@ -333,7 +343,7 @@ async function fetchModels(p) {
 function modelsTable(p) {
   const search = el('input', { type: 'text', placeholder: '搜索模型', value: llm.search[p.id] || '' });
   const onlyOn = el('input', { type: 'checkbox', checked: !!llm.onlyOn[p.id] });
-  const box = el('div', { class: 'models' });
+  const box = el('div', { class: 'models', 'data-pid': p.id });
   const drawRows = () => {
     const q = (llm.search[p.id] || '').toLowerCase();
     const list = p.models.filter(m => (!q || m.id.toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q))
