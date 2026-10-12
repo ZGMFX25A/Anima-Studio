@@ -175,7 +175,7 @@ def set_models(pid: str, models: list[dict]) -> dict | None:
 
 
 def update_model(pid: str, model_id: str, patch: dict) -> dict | None:
-    """更新单个模型的设置（enabled / vision / level / thinking / unsupported_levels / structured / last_test）。"""
+    """更新单个模型的设置（enabled / vision / level / thinking / unsupported_levels / structured / last_test / protocol）。"""
     with _lock:
         d = _load()
         p = next((x for x in d["providers"] if x["id"] == pid), None)
@@ -189,7 +189,7 @@ def update_model(pid: str, model_id: str, patch: dict) -> dict | None:
                 m["vision"] = v
                 m["vision_source"] = patch.get("vision_source", "manual") if v is not None else None
             elif k in ("enabled", "level", "thinking", "unsupported_levels", "structured", "last_test",
-                       "vision_source"):
+                       "vision_source", "protocol"):
                 m[k] = v
         lv = m.get("thinking", {}).get("levels") or ["off"]
         if m.get("level") not in lv:

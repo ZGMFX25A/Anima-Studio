@@ -1,4 +1,7 @@
-"""OpenAI 兼容 / Anthropic 两种格式的 LLM 调用：拉取模型列表、对话、测试。"""
+"""OpenAI 兼容 / Anthropic 两种格式的 LLM 调用：拉取模型列表、对话、测试。
+
+对话接口（协议）有三种：Chat Completions、Responses、Messages（Anthropic）。每个模型第一次调用时
+按优先级自动尝试，接口明确表示不支持就换下一种；试通后记到模型的 protocol 里，以后直接用。"""
 from __future__ import annotations
 
 import base64
@@ -16,6 +19,9 @@ ANTHROPIC_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 BUDGETS = {"low": 2048, "medium": 8192, "high": 16000}
 MAX_TOKENS = 16000
 _LEVEL_TEXT = {"off": "不思考", "on": "思考", "default": "模型默认", "auto": "自动"}
+PROTOCOLS = ["chat", "responses", "messages"]
+PROTOCOL_TEXT = {"chat": "Chat Completions", "responses": "Responses", "messages": "Messages"}
+_EFFORT_LEVELS = ("minimal", "low", "medium", "high", "xhigh", "max")
 
 
 class LLMError(Exception):
@@ -33,11 +39,22 @@ def _anthropic_base(p: dict) -> str:
     return b[:-3] if b.endswith("/v1") else b
 
 
-def _headers(p: dict) -> dict:
+def _openai_base(p: dict) -> str:
+    """OpenAI 系接口的根地址：OpenAI 格式的服务商原样使用；Anthropic 格式的（通常不带 /v1）补上 /v1。"""
+    if p["format"] == "openai":
+        return p["base_url"].rstrip("/")
+    return _anthropic_base(p) + "/v1"
+
+
+def _headers(p: dict, proto: str | None = None) -> dict:
     key = p.get("api_key", "")
-    if p["format"] == "anthropic":
+    proto = proto or ("messages" if p["format"] == "anthropic" else "chat")
+    if proto == "messages":
         h = {"anthropic-version": "2023-06-01", "content-type": "application/json"}
-        if p.get("auth") == "bearer":
+        if p["format"] == "openai":      # OpenAI 兼容服务商上的 Claude：不知道中转认哪种，两种都带
+            h["authorization"] = f"Bearer {key}"
+            h["x-api-key"] = key
+        elif p.get("auth") == "bearer":
             h["authorization"] = f"Bearer {key}"
         else:
             h["x-api-key"] = key
@@ -136,7 +153,7 @@ def fetch_models(p: dict) -> list[dict]:
             if unsup:                    # 接口拒绝过的档位继续去掉（OpenAI 兼容格式由 apply_style 处理）
                 m["unsupported_levels"] = unsup
                 m["thinking"] = store.thinking_with(m["thinking"]["mode"], m["thinking"]["levels"], unsup)
-            for k in ("structured", "last_test"):
+            for k in ("structured", "last_test", "protocol"):
                 if k in o:
                     m[k] = o[k]
             m["level"] = o.get("level") if o.get("level") in m["thinking"]["levels"] else m["thinking"]["levels"][0]
@@ -192,51 +209,105 @@ def _level_rank(x: str) -> int:
     return store.LEVEL_ORDER.index(x) if x in store.LEVEL_ORDER else len(store.LEVEL_ORDER)
 
 
+def _is_openai_family(model_id: str) -> bool:
+    name = model_id.lower().rsplit("/", 1)[-1]
+    if name.startswith("gpt-oss"):      # 开源权重，各家一般只在 Chat Completions 上提供
+        return False
+    return name.startswith("gpt") or "codex" in name or re.match(r"o[1-9](?![0-9a-z])", name) is not None
+
+
+def protocol_order(p: dict, m: dict) -> list[str]:
+    """尝试接口的顺序：记住的接口最先；其次按模型名（claude / gpt 系）；再按服务商格式。"""
+    if "claude" in m["id"].lower():
+        order = ["messages", "chat", "responses"]
+    elif _is_openai_family(m["id"]):
+        order = ["responses", "chat", "messages"]
+    elif p["format"] == "anthropic":
+        order = ["messages", "chat", "responses"]
+    else:
+        order = ["chat", "responses", "messages"]
+    if m.get("protocol") in PROTOCOLS:
+        order = [m["protocol"]] + [x for x in order if x != m["protocol"]]
+    return order
+
+
+_PROTO_HINTS = ("protocol", "endpoint", "not found", "invalid url", "unknown url", "no route", "unsupported",
+                "not support", "not allowed", "does not exist")
+
+
+def _wrong_protocol(status: int, low: str) -> bool:
+    """接口是否在说「这个模型 / 中转不走这种接口」：只在这时换下一种；鉴权、限流、服务端错误照原样报出。"""
+    if status in (404, 405):
+        return True
+    return status in (400, 415, 422) and any(s in low for s in _PROTO_HINTS)
+
+
 def chat(p: dict, m: dict, level: str, system: str, parts: list[dict], schema: dict | None) -> dict:
     """发送一次对话。parts: [{"type":"text","text":...} | {"type":"image","media_type":...,"data":b64}]。
 
+    按 protocol_order 依次尝试三种接口，接口明确不支持就换下一种，试通后记到模型的 protocol。
     遇到接口不支持的参数（结构化输出 / 关闭思考 / 思考强度）会自动降级重试，并把结论记到模型设置里。
     返回 {"text", "request" (去掉图片数据), "attempts", "elapsed", "level"（实际使用的档位）,
-    "level_note"（档位被自动改掉时给用户的提示，否则 None）}。
+    "level_note"（档位被自动改掉时给用户的提示，否则 None）, "protocol"（实际使用的接口）}。
     """
+    t0 = time.time()
+    attempts: list[str] = []
+    fails: list[str] = []
+    for proto in protocol_order(p, m):
+        res = _chat_with(p, m, proto, level, system, parts, schema, attempts)
+        if res is not None:
+            if m.get("protocol") != proto:
+                m["protocol"] = proto
+                store.update_model(p["id"], m["id"], {"protocol": proto})
+            res.update(attempts=attempts, elapsed=time.time() - t0, protocol=proto)
+            return res
+        fails.append(f"{PROTOCOL_TEXT[proto]}：{attempts[-1]}")
+        if m.get("protocol") == proto:   # 记住的接口不再可用（例如中转改了）：清掉，重新按优先级试
+            m["protocol"] = None
+            store.update_model(p["id"], m["id"], {"protocol": None})
+    raise LLMError("三种接口都不支持该模型。" + "；".join(fails), 400)
+
+
+def _chat_with(p, m, proto, level, system, parts, schema, attempts) -> dict | None:
+    """用一种接口发送（含参数自动降级）。成功返回结果；接口表示不支持这种协议时返回 None；其它错误抛出。"""
     asked = level
     thinking = m.get("thinking") or {"mode": "unknown", "levels": ["off"]}
     use_format = bool(schema) and m.get("structured") is not False
     use_effort = True
-    # OpenAI 兼容：json_schema → json_object → 不约束。已知只支持 json_object 的模型（含 DeepSeek）直接从 object 开始
+    # OpenAI 系接口：json_schema → json_object → 不约束。已知只支持 json_object 的模型（含 DeepSeek）直接从 object 开始
     json_mode = "object" if (m.get("structured") == "object" or thinking.get("mode") == "deepseek") else "schema"
-    attempts: list[str] = []
-    t0 = time.time()
     for _ in range(12):
-        if p["format"] == "anthropic":
-            url, body = _anthropic_body(p, m, thinking, level, system, parts, schema if use_format else None,
-                                        use_effort)
+        fmt_schema = schema if use_format else None
+        if proto == "messages":
+            url, body = _anthropic_body(p, m, thinking, level, system, parts, fmt_schema, use_effort)
+        elif proto == "responses":
+            url, body = _responses_body(p, m, thinking, level, system, parts, fmt_schema, json_mode, use_effort)
         else:
-            url, body = _openai_body(p, m, thinking, level, system, parts, schema if use_format else None,
-                                     json_mode, use_effort)
+            url, body = _openai_body(p, m, thinking, level, system, parts, fmt_schema, json_mode, use_effort)
         try:
-            r = httpx.post(url, headers=_headers(p), json=body, timeout=600)
+            r = httpx.post(url, headers=_headers(p, proto), json=body, timeout=600)
         except httpx.HTTPError as e:
             raise LLMError(f"连接失败：{e}", retryable=True) from e
         if r.status_code == 200:
-            if p["format"] == "openai" and use_format and json_mode == "object" and m.get("structured") != "object":
+            if proto != "messages" and use_format and json_mode == "object" and m.get("structured") != "object":
                 store.update_model(p["id"], m["id"], {"structured": "object"})   # 记住，下次不再先试 json_schema
-            text = _extract_text(p, r.json())
+            text = _extract_text(proto, r.json())
             note = None
             if level != asked:
                 note = (f"「{m['id']}」不支持思考强度「{_LEVEL_TEXT.get(asked, asked)}」，"
                         f"已自动改用「{_LEVEL_TEXT.get(level, level)}」，并从该模型的档位中去掉")
-            return {"text": text, "request": _sanitize(body), "attempts": attempts, "elapsed": time.time() - t0,
-                    "level": level, "level_note": note}
+            return {"text": text, "request": _sanitize(body), "level": level, "level_note": note}
         msg = _err_text(r)
         low = msg.lower()
         attempts.append(f"HTTP {r.status_code}: {msg}")
         if r.status_code not in (400, 422):
+            if _wrong_protocol(r.status_code, low):
+                return None
             raise LLMError(f"HTTP {r.status_code}：{msg}", r.status_code)
         # —— 自动降级 ——
         if use_format and any(s in low for s in ("format", "schema", "response_format", "output_config")) \
                 and "effort" not in low:
-            if p["format"] == "openai" and json_mode == "schema":
+            if proto != "messages" and json_mode == "schema":
                 json_mode = "object"
                 continue
             use_format = False
@@ -251,6 +322,8 @@ def chat(p: dict, m: dict, level: str, system: str, parts: list[dict], schema: d
             if use_effort:
                 use_effort = False      # 档位之外的思考参数也不认：改为不发送
                 continue
+        if _wrong_protocol(r.status_code, low):
+            return None
         raise LLMError(f"HTTP {r.status_code}：{msg}", r.status_code)
     raise LLMError("多次自动降级后仍失败：" + " | ".join(attempts[-3:]))
 
@@ -268,6 +341,8 @@ def _anthropic_body(p, m, thinking, level, system, parts, schema, use_effort):
         body["system"] = system
     oc: dict = {}
     mode = thinking.get("mode") if level != "default" else None    # 模型默认：不发送思考参数
+    if mode not in (None, "adaptive", "budget", "none"):
+        mode = "unknown"                 # 档位来自 OpenAI 兼容服务商：按未知处理（adaptive + effort）
     if mode == "adaptive":
         if level == "off":
             body["thinking"] = {"type": "disabled"}
@@ -281,7 +356,7 @@ def _anthropic_body(p, m, thinking, level, system, parts, schema, use_effort):
             body["max_tokens"] = BUDGETS[level] + 8000
     elif mode == "unknown" and level != "off":
         body["thinking"] = {"type": "adaptive"}
-        if use_effort:
+        if use_effort and level in _EFFORT_LEVELS:
             oc["effort"] = level
     if schema:
         oc["format"] = {"type": "json_schema", "schema": schema}
@@ -291,7 +366,8 @@ def _anthropic_body(p, m, thinking, level, system, parts, schema, use_effort):
 
 
 def _sent_thinking(body: dict) -> bool:
-    return any(k in body for k in ("reasoning_effort", "thinking", "enable_thinking")) or         "effort" in body.get("output_config", {})
+    return any(k in body for k in ("reasoning_effort", "reasoning", "thinking", "enable_thinking")) or \
+        "effort" in body.get("output_config", {})
 
 
 def _openai_body(p, m, thinking, level, system, parts, schema, json_mode, use_effort):
@@ -308,6 +384,8 @@ def _openai_body(p, m, thinking, level, system, parts, schema, json_mode, use_ef
     msgs.append({"role": "user", "content": content})
     body: dict = {"model": m["id"], "messages": msgs}
     style = thinking.get("mode") if level != "default" else None   # 模型默认：不发送思考参数
+    if style not in (None, *store.THINKING_STYLES):
+        style = "openai"                 # 档位来自 Anthropic 服务商：用 reasoning_effort
     if use_effort:
         if style == "deepseek":
             if level == "off":
@@ -317,7 +395,7 @@ def _openai_body(p, m, thinking, level, system, parts, schema, json_mode, use_ef
                 body["reasoning_effort"] = level
         elif style == "qwen":
             body["enable_thinking"] = level != "off"
-        elif style in ("openai", "reasoning_effort"):
+        elif style in ("openai", "reasoning_effort") and (level == "off" or level in _EFFORT_LEVELS):
             body["reasoning_effort"] = "none" if level == "off" else level
     if schema:
         if json_mode == "schema":
@@ -325,12 +403,39 @@ def _openai_body(p, m, thinking, level, system, parts, schema, json_mode, use_ef
                                        "json_schema": {"name": "prompt_fields", "strict": True, "schema": schema}}
         elif json_mode == "object":
             body["response_format"] = {"type": "json_object"}
-    return f"{p['base_url'].rstrip('/')}/chat/completions", body
+    return f"{_openai_base(p)}/chat/completions", body
 
 
-def _extract_text(p: dict, d: dict) -> str:
-    if p["format"] == "anthropic":
+def _responses_body(p, m, thinking, level, system, parts, schema, json_mode, use_effort):
+    content = []
+    for x in parts:
+        if x["type"] == "text":
+            content.append({"type": "input_text", "text": x["text"]})
+        else:
+            content.append({"type": "input_image", "image_url": f"data:{x['media_type']};base64,{x['data']}"})
+    body: dict = {"model": m["id"], "input": [{"role": "user", "content": content}]}
+    if system:
+        body["instructions"] = system
+    style = thinking.get("mode") if level != "default" else None   # 模型默认：不发送思考参数
+    if use_effort and style not in (None, "none", "qwen") and (level == "off" or level in _EFFORT_LEVELS):
+        body["reasoning"] = {"effort": "none" if level == "off" else level}
+    if schema:
+        if json_mode == "schema":
+            body["text"] = {"format": {"type": "json_schema", "name": "prompt_fields", "strict": True,
+                                       "schema": schema}}
+        elif json_mode == "object":
+            body["text"] = {"format": {"type": "json_object"}}
+    return f"{_openai_base(p)}/responses", body
+
+
+def _extract_text(proto: str, d: dict) -> str:
+    if proto == "messages":
         return "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text")
+    if proto == "responses":
+        if isinstance(d.get("output_text"), str) and d["output_text"]:
+            return d["output_text"]
+        return "".join(c.get("text", "") for o in d.get("output") or [] if o.get("type") == "message"
+                       for c in o.get("content") or [] if c.get("type") == "output_text")
     ch = (d.get("choices") or [{}])[0].get("message", {})
     c = ch.get("content")
     if isinstance(c, list):
@@ -341,7 +446,7 @@ def _extract_text(p: dict, d: dict) -> str:
 def _sanitize(body: dict) -> dict:
     """日志用：把图片数据替换成尺寸说明。"""
     b = copy.deepcopy(body)
-    for msg in b.get("messages", []):
+    for msg in b.get("messages", []) + b.get("input", []):
         if not isinstance(msg.get("content"), list):
             continue
         for part in msg["content"]:
@@ -351,6 +456,8 @@ def _sanitize(body: dict) -> dict:
             if part.get("type") == "image_url":
                 url = part["image_url"]["url"]
                 part["image_url"]["url"] = f"<image {len(url) * 3 // 4} bytes>"
+            if part.get("type") == "input_image":
+                part["image_url"] = f"<image {len(part['image_url']) * 3 // 4} bytes>"
     return b
 
 
