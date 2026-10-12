@@ -3,7 +3,8 @@
 本地运行的 Anima 动漫绘图工具：网页前端 + 绘画模块，底层由 ComfyUI 执行，所有出图都在本机完成。
 
 - **绘图**：Anima 系列模型，人物参考（1~3 张参考图）、动作参考（照片自动检测骨架，或直接给骨架图）
-- **AI 填写**：用一段描述让 LLM 生成或修改提示词字段，可联网检索 Danbooru 角色与画师
+- **AI 填写**：用一段描述让 LLM 生成或修改提示词字段，可联网检索 Danbooru 角色与画师；
+  上传的灵感图、人物 / 动作参考图先由「识图模型」逐张详细描述，再交给 LLM 生成（生成用的模型不必能看图）
 - **人设**：保存常用角色（已有角色从 Danbooru 导入，原创角色由 AI 整理），一键填入绘图页
 - **历史 / 收藏**：每张图的完整参数，可一键复用
 
@@ -40,7 +41,7 @@ Anima-Studio\
 ### 1. 获取代码
 
 ```bash
-git clone <仓库地址> Anima-Studio
+git clone https://github.com/ZGMFX25A/Anima-Studio.git Anima-Studio
 ```
 
 ### 2. ComfyUI 便携版
@@ -124,7 +125,7 @@ WSL / Hyper-V / Docker 有时会临时占用 8188、8190、8200 端口，导致�
 
 | 菜单项 | 说明 |
 |---|---|
-| **LLM** | 「AI 填写」和「人设」需要一个 LLM 服务：添加服务商（OpenAI 兼容格式或 Anthropic 格式）、填 Base URL 与 API Key、拉取模型，再点「测试」检查连通性和识图能力。不配置也能手动填写提示词出图。 |
+| **LLM** | 「AI 填写」和「人设」需要一个 LLM 服务：添加服务商（OpenAI 兼容格式或 Anthropic 格式）、填 Base URL 与 API Key、拉取模型，再点「测试」检查连通性和识图能力。测出能识图的模型会出现在 AI 填写卡片的「识图模型」下拉里，可以和生成用的模型分开选（例如用能看图的模型识图、用不能看图的模型生成）。不配置也能手动填写提示词出图。 |
 | **联网** | Danbooru 角色 / 画师检索的联网方式（直连 / 系统代理 / 自定义代理）。「标签参考」需要 [DanbooruSearch](https://sakizuki-danboorusearch.hf.space) 的 Key（可选）。 |
 | **存储** | 图片保存目录，默认为根目录下的 `output\`（按日期分子目录）。改成其它目录后，单独用 `start_painter.bat` 启动绘画模块时也会用这个目录。 |
 | **引擎** | 查看与启动 / 停止 / 重启 ComfyUI 和绘画模块。 |
@@ -145,7 +146,7 @@ WSL / Hyper-V / Docker 有时会临时占用 8188、8190、8200 端口，导致�
 
 | 文档 | 内容 |
 |---|---|
-| [frontend/DESIGN.md](frontend/DESIGN.md) | 前端设计：各页面、LLM 辅助填写、联网检索、存储、人设 |
+| [frontend/DESIGN.md](frontend/DESIGN.md) | 前端设计：各页面、LLM 辅助填写、联网检索、存储、人设、识图 |
 | [frontend/prompts/README.md](frontend/prompts/README.md) | 发给 LLM 的全部提示词文件说明，修改后即时生效 |
 | [painter/README.md](painter/README.md) | 绘画模块：HTTP 接口、模型兼容性实测、已知限制 |
 | [painter/PROMPT_GUIDE.md](painter/PROMPT_GUIDE.md) | 开启人物 / 动作参考时提示词的注意事项 |
