@@ -7,11 +7,12 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from .. import config, gallery, personas
+from .. import config, personas
 from ..generation import FIELD_NAMES, load_json
 from ..web import research, tagsearch
 from ..web.net import WebError
 from . import client, retry, store
+from .vision import describe as describe_images
 
 SAFETY = ("safe", "sensitive", "nsfw", "explicit")
 
@@ -70,7 +71,7 @@ def _normalize(raw: dict, mode: str, safety: str, current: dict, presets: dict, 
 
 
 def fill(req: dict) -> dict:
-    rid = str(req.get("request_id") or "")    # 页面「取消」用；一次填写可能包含识别角色 + 正式请求两次 LLM 调用
+    rid = str(req.get("request_id") or "")    # 页面「取消」用；一次填写可能包含识图、识别角色、正式请求多次 LLM 调用
     try:
         return _fill(req, rid)
     finally:
@@ -88,7 +89,16 @@ def _fill(req: dict, rid: str) -> dict:
     if level not in levels:
         level = levels[0]
     safety = req.get("safety") if req.get("safety") in SAFETY else ""
-    vision = m.get("vision") is True
+    # 识图模型：不选 = 同上（AI 填写的模型与思考档）；单独选的模型用它在「菜单 → LLM」里设置的默认思考档
+    vp, vm, vlevel = p, m, level
+    v_ids = (req.get("vision_provider_id") or "", req.get("vision_model_id") or "")
+    if v_ids[1] and v_ids != (p["id"], m["id"]):
+        vp, vm = store.find_model(*v_ids)
+        if not vp or not vm:
+            raise client.LLMError("所选识图模型不存在，请在 菜单 → LLM 中重新勾选")
+        vlevels = (vm.get("thinking") or {}).get("levels") or ["off"]
+        vlevel = vm.get("level") if vm.get("level") in vlevels else vlevels[0]
+    vision = vm.get("vision") is True
     current = req.get("current_fields") or {}
     presets = load_json("defaults.json")["aspect_presets"]
     labels = json.loads((config.PROMPTS_DIR / "fill" / "user" / "labels.json").read_text(encoding="utf-8"))
@@ -110,6 +120,21 @@ def _fill(req: dict, rid: str) -> dict:
     }
 
     desc = (req.get("description") or "").strip()
+
+    # —— 识图：识图模型先逐张详细描述图片，结果作为文字参考交给正式填写（正式填写不再收图片）；与联网检索并行 ——
+    v_items: list[dict] = []
+    if vision:
+        v_items = ([{"kind": "inspiration", "label": _render(labels["user_image"], {"n": i}), "hash": h}
+                    for i, h in enumerate(user_imgs, 1)]
+                   + [{"kind": "character", "label": _render(labels["character_image"], {"n": i}), "hash": h}
+                      for i, h in enumerate(ch_imgs, 1)]
+                   + ([{"kind": "pose", "label": labels["pose_image"], "hash": po_img,
+                        "input_type": po.get("input_type")}] if po_img else []))
+    elif user_imgs:
+        warnings.append("当前识图模型不支持图片，灵感参考图未发送")
+    v_ex = ThreadPoolExecutor(max_workers=1)
+    v_fut = v_ex.submit(describe_images, vp, vm, vlevel, v_items, rid) if v_items else None
+    v_ex.shutdown(wait=False)
 
     # —— 人设匹配（可关）：描述里出现人设的名称 / 别名，或在绘图页选用了人设；本地完成，不联网、不调用 LLM ——
     persona_entries: list[dict] = []
@@ -177,19 +202,34 @@ def _fill(req: dict, rid: str) -> dict:
     artist_text = research.artist_block(artists)
     tag_text = research.tag_block(tags)
 
+    # —— 识图结果：某张图识图失败时按「看不到图」处理 ——
+    v_res = v_fut.result() if v_fut else []
+    if retry.is_cancelled(rid):
+        raise client.LLMError("已取消")
+    for r in v_res:
+        if r["error"]:
+            warnings.append(f"识图失败（{r['label']}）：{r['error']}")
+        elif r.get("retries"):
+            warnings.append(f"识图（{r['label']}）出错后自动重试了 {len(r['retries'])} 次才成功")
+        if r.get("level_note") and r["level_note"] not in warnings:
+            warnings.append(r["level_note"])
+    seen = {k: [r for r in v_res if r["kind"] == k and r["text"]] for k in ("inspiration", "character", "pose")}
+    if v_res and not any(seen.values()) and not desc:
+        raise client.LLMError(f"识图失败，且没有填写描述：{v_res[0]['error']}")
+    if vm is m:      # 同一个模型：识图时档位被接口拒绝并自动改掉的话，正式填写直接用改后的档位
+        level = next((r["level"] for r in v_res if r.get("level") and r["level"] != level), level)
+    values["n_images"] = len(seen["inspiration"])
+    vision_text = _vision_block([r for r in v_res if r["text"]])
+
     # —— 系统提示词 ——
     sections = ["system.md", "fields.md", f"mode_{mode}.md", "safety_levels.md",
                 "safety_fixed.md" if safety else "safety_auto.md"]
-    if user_imgs:
-        if vision:
-            sections.append("user_images.md")
-        else:
-            warnings.append("当前模型不支持图片，灵感参考图未发送")
-            user_imgs = []
+    if seen["inspiration"]:
+        sections.append("user_images.md")
     if ch_imgs:
-        sections.append("ref_character.md" if vision else "ref_character_noimage.md")
+        sections.append("ref_character.md" if seen["character"] else "ref_character_noimage.md")
     if po_img:
-        sections.append("ref_pose.md" if vision else "ref_pose_noimage.md")
+        sections.append("ref_pose.md" if seen["pose"] else "ref_pose_noimage.md")
     if ch_imgs and po_img:
         sections.append("ref_both.md")
     if persona_text:
@@ -202,28 +242,11 @@ def _fill(req: dict, rid: str) -> dict:
         sections.append("tag_reference.md")
     system = "\n\n".join(_render(_read(f"fill/system/{s}"), values) for s in sections)
 
-    # —— 用户消息：带标注的图片 + 描述 ——
+    # —— 用户消息：识图结果 + 各参考资料块 + 描述（只有文字，不发图片） ——
     parts: list[dict] = []
-    img_log: list[str] = []
-
-    def add_image(label: str, h: str) -> None:
-        try:
-            part = client.image_part(gallery.ref_bytes(h))
-        except FileNotFoundError:
-            warnings.append(f"{label} 文件已丢失，未发送")
-            return
-        parts.append({"type": "text", "text": label})
-        parts.append(part)
-        img_log.append(f"{label} {part['size'][0]}x{part['size'][1]}")
-
-    for i, h in enumerate(user_imgs, 1):
-        add_image(_render(labels["user_image"], {"n": i}), h)
-    if vision:
-        for i, h in enumerate(ch_imgs, 1):
-            add_image(_render(labels["character_image"], {"n": i}), h)
-        if po_img:
-            add_image(labels["pose_image"], po_img)
-    blocks = (persona_text, char_text, artist_text, tag_text)
+    img_log = [f"{r['label']} " + ("（缓存）" if r["cached"] else f"{r['size'][0]}x{r['size'][1]}" if r.get("size")
+                                   else "（未发送）") for r in v_res]
+    blocks = (vision_text, persona_text, char_text, artist_text, tag_text)
     for block in blocks:
         if block:
             parts.append({"type": "text", "text": block})
@@ -234,7 +257,11 @@ def _fill(req: dict, rid: str) -> dict:
                  "format": p["format"], "model": m["id"], "level": level, "safety": safety or "auto",
                  "vision": vision, "sections": sections, "images": img_log, "system": system,
                  "references": [b for b in blocks if b], "user_text": parts[-1]["text"],
-                 "research": research_log or None}
+                 "research": research_log or None,
+                 "recognition": {"provider": vp["name"], "model": vm["id"], "level": vlevel,
+                                 "results": [{k: r.get(k) for k in ("label", "kind", "size", "cached", "elapsed",
+                                                                     "error", "retries", "text")} for r in v_res]}
+                 if v_res else None}
     try:
         raw, _ = retry.chat(p, m, level, system, parts, schema, retry.json_check(FIELD_NAMES), log, rid)
     except client.LLMError:
@@ -254,7 +281,17 @@ def _fill(req: dict, rid: str) -> dict:
     _write_log(log)
     return {"fields": fields, "warnings": warnings, "elapsed": time.time() - t_start, "mode": mode,
             "research": research.summary(results, artists, tags, tag_error, want_web, persona_info)
-            if (want_web or want_tags or persona_info) else None}
+            if (want_web or want_tags or persona_info) else None,
+            "recognition": {"model": vm.get("name") or vm["id"],
+                            "items": [{k: r.get(k) for k in ("label", "kind", "text", "error", "cached", "elapsed")}
+                                      for r in v_res]} if v_res else None}
+
+
+def _vision_block(results: list[dict]) -> str:
+    if not results:
+        return ""
+    items = [_render(_read("fill/user/vision_item.md"), {"label": r["label"], "text": r["text"]}) for r in results]
+    return _render(_read("fill/user/vision_block.md"), {"items": "\n\n".join(items)})
 
 
 def test(req: dict) -> dict:

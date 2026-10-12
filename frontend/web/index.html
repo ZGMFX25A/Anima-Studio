@@ -39,7 +39,12 @@
         <textarea id="llm-desc" rows="3" data-bind="llm.description" placeholder="描述你想要的画面，中英文都可以。例如：初音未来在夏日海边奔跑，傍晚逆光，胶片感"></textarea>
         <div class="llm-images-row">
           <div class="dz-wrap" id="llm-images"></div>
-          <div class="llm-img-note muted" id="llm-img-note"></div>
+          <div class="llm-img-side">
+            <label class="llm-vision" title="上传的图片（灵感图、已开启的人物 / 动作参考图）先由这个模型逐张详细描述，再把描述交给上面的模型生成提示词；生成用的模型不必能看图">
+              <span>识图模型</span><select id="llm-vision-model"></select>
+            </label>
+            <div class="llm-img-note muted" id="llm-img-note"></div>
+          </div>
         </div>
         <div class="grid3">
           <label class="mini"><span>模型</span><select id="llm-model"></select></label>
@@ -73,6 +78,10 @@
           <button class="btn" id="llm-modify" title="在当前字段的基础上按描述修改">修改</button>
           <button class="btn accent" id="llm-generate" title="根据描述重新生成全部字段（覆盖已有内容）">生成</button>
         </div>
+        <details class="research" id="llm-vision" hidden>
+          <summary id="llm-vision-sum">识图结果</summary>
+          <div class="research-body" id="llm-vision-body"></div>
+        </details>
         <details class="research" id="llm-research" hidden>
           <summary id="llm-research-sum">参考资料</summary>
           <div class="research-body" id="llm-research-body"></div>

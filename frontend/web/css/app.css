@@ -189,6 +189,10 @@ input.out { border-color: color-mix(in srgb, var(--warn) 60%, var(--border)); }
 .actions .muted { margin-right: auto; }
 
 .llm-images-row { display: flex; align-items: center; gap: 10px; }
+.llm-img-side { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.llm-vision { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.llm-vision > span { white-space: nowrap; }
+.llm-vision select { width: auto; max-width: 280px; min-width: 0; padding: 4px 8px; font-size: 12.5px; }
 .llm-img-note { font-size: 12px; }
 
 .gen-bar { position: sticky; bottom: 0; padding: 10px 0 16px; background: linear-gradient(transparent, var(--bg) 30%); margin-top: auto; }
@@ -414,6 +418,11 @@ a:hover { text-decoration: underline; }
 .rs-tag { font: 12.5px var(--mono); }
 .rs-alt { flex-basis: 100%; padding-left: 4px; }
 .rs-tags { display: flex; flex-direction: column; gap: 6px; }
+.vr-item { display: flex; flex-direction: column; gap: 6px; }
+.vr-text {
+  white-space: pre-wrap; font-size: 12.5px; line-height: 1.55; max-height: 320px; overflow: auto;
+  padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+}
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip {
   display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 12px;

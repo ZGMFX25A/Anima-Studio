@@ -36,8 +36,8 @@ export function defaultForm() {
     character_ref: { enabled: false, images: [], strength: 1.0, start_percent: 0.0, end_percent: 1.0 },
     pose_ref: { enabled: false, image: null, input_type: 'photo', strength: 1.0, fit: 'person', margin: 0.05,
       persons: 'largest', hands: true, face: true, feet: true },
-    llm: { description: '', images: [], model_key: '', level: '', safety: '', web_character: false, tag_reference: false,
-      persona_match: true, persona: null },   // persona：在绘图页选用的人设 {id, outfit_id, name, outfit_name}
+    llm: { description: '', images: [], model_key: '', level: '', vision_key: '', safety: '', web_character: false,
+      tag_reference: false, persona_match: true, persona: null },   // vision_key：识图模型，'' = 同上；persona：在绘图页选用的人设 {id, outfit_id, name, outfit_name}
   };
 }
 

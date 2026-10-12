@@ -20,7 +20,7 @@ export function initLlm() {
 
   imgZone = dropzone($('#llm-images'), {
     max: 3, label: '灵感图', get: () => app.form.llm.images, set: (v) => setField('llm.images', v),
-    isDisabled: () => current()?.vision !== true,
+    isDisabled: () => visionModel()?.vision !== true,
   });
 
   $('#llm-model').addEventListener('change', (e) => {
@@ -29,8 +29,10 @@ export function initLlm() {
     app.form.llm.level = m ? (m.level || m.levels[0]) : '';
     saveForm();
     renderLevel();
+    renderVisionModels();
     refresh();
   });
+  $('#llm-vision-model').addEventListener('change', (e) => { app.form.llm.vision_key = e.target.value; saveForm(); refresh(); });
   $('#llm-level').addEventListener('change', (e) => { app.form.llm.level = e.target.value; saveForm(); });
   $('#llm-generate').addEventListener('click', () => run('generate'));
   $('#llm-modify').addEventListener('click', () => run('modify'));
@@ -52,6 +54,29 @@ function current() {
   return models.find(m => m.key === app.form.llm.model_key) || null;
 }
 
+// 识图模型：'' = 同上（用 AI 填写的模型）；下拉框只列出能看图的模型
+function visionModel() {
+  const k = app.form.llm.vision_key;
+  return (k && models.find(m => m.key === k && m.vision === true)) || current();
+}
+
+function renderVisionModels() {
+  const sel = $('#llm-vision-model');
+  const m = current();
+  const list = models.filter(x => x.vision === true);
+  if (models.length && app.form.llm.vision_key && !list.some(x => x.key === app.form.llm.vision_key)) {
+    app.form.llm.vision_key = '';    // 选过的模型被取消勾选或测出不能看图：回到「同上」
+    saveForm();
+  }
+  const groups = {};
+  for (const x of list) (groups[x.provider] ||= []).push(x);
+  fill(sel, el('option', { value: '' }, m ? `同上（${m.label}）` : '同上'),
+    ...Object.entries(groups).map(([prov, l]) =>
+      el('optgroup', { label: prov }, ...l.map(x => el('option', { value: x.key }, x.label)))));
+  sel.value = app.form.llm.vision_key;
+  sel.disabled = !models.length;
+}
+
 function renderModels() {
   const sel = $('#llm-model');
   if (!models.length) {
@@ -71,6 +96,7 @@ function renderModels() {
     sel.value = app.form.llm.model_key;
   }
   renderLevel();
+  renderVisionModels();
 }
 
 function renderLevel() {
@@ -86,22 +112,24 @@ function renderLevel() {
 
 function refresh() {
   const m = current();
+  const vm = visionModel();
   const f = app.form;
-  const vision = m?.vision;
+  const vision = vm?.vision;
   imgZone?.render();
-  $('#llm-img-note').textContent = !m ? '' : vision === true ? '可附带最多 3 张灵感图（只发给 LLM，不参与绘画）'
-    : vision === false ? '当前模型不支持图片' : '当前模型未测试图片支持，请先在 菜单 → LLM 中点「测试」';
+  const pick = models.some(x => x.vision === true) ? '，可以在「识图模型」里另选一个能看图的模型' : '';
+  $('#llm-img-note').textContent = !m ? '' : vision === true ? '可附带最多 3 张灵感图：先由识图模型逐张描述，再交给上面的模型生成（不参与绘画）'
+    : vision === false ? `当前模型不支持图片${pick}` : `当前模型未测试图片支持，请先在 菜单 → LLM 中点「测试」${pick}`;
   const hints = [];
   const noSee = m && vision !== true;
   if (noSee && f.pose_ref.enabled && f.pose_ref.image) {
-    hints.push('当前模型看不到动作参考图：请在描述里写明动作（含朝向、全身/半身），或者让 action 留空。');
+    hints.push('识图模型看不到动作参考图：请另选能看图的识图模型，或在描述里写明动作（含朝向、全身/半身），或者让 action 留空。');
   }
   if (noSee && f.character_ref.enabled && f.character_ref.images.length) {
-    hints.push('当前模型看不到人物参考图：请在描述里写人物的核心特征，或者让 appearance 留空。');
+    hints.push('识图模型看不到人物参考图：请另选能看图的识图模型，或在描述里写人物的核心特征，或者让 appearance 留空。');
   }
   if (!controller) {
     const refsSent = !noSee && m && ((f.pose_ref.enabled && f.pose_ref.image) || (f.character_ref.enabled && f.character_ref.images.length));
-    $('#llm-status').textContent = lastResult || (refsSent ? '已开启的参考图会一起发给 LLM' : '');
+    $('#llm-status').textContent = lastResult || (refsSent ? '已开启的参考图会先识图，再作为参考交给生成' : '');
   }
   fill($('#llm-hints'), ...hints.map(t => el('div', { class: 'hint warn' }, t)));
   renderPersonaLink();
@@ -118,7 +146,10 @@ async function run(mode) {
   const m = current();
   if (!m) return;
   const f = app.form;
-  if (mode === 'generate' && !f.llm.description.trim() && !f.llm.images.length) {
+  const vm = visionModel();
+  const canSee = vm?.vision === true;
+  const images = canSee ? f.llm.images : [];
+  if (mode === 'generate' && !f.llm.description.trim() && !images.length) {
     return toast('请先填写描述', 'warn');
   }
   controller = new AbortController();
@@ -127,7 +158,11 @@ async function run(mode) {
   btn.classList.add('busy');
   refresh();
   const t0 = Date.now();
-  const stages = [f.llm.web_character && '识别角色', (f.llm.web_character || f.llm.tag_reference) && '检索', '生成'].filter(Boolean);
+  // 识图与识别角色同时进行
+  const recognize = canSee && (images.length || (f.character_ref.enabled && f.character_ref.images.length)
+    || (f.pose_ref.enabled && f.pose_ref.image));
+  const first = [recognize && '识图', f.llm.web_character && '识别角色'].filter(Boolean).join(' + ');
+  const stages = [first, (f.llm.web_character || f.llm.tag_reference) && '检索', '生成'].filter(Boolean);
   const tick = setInterval(() => { $('#llm-status').textContent = `${stages.join(' → ')}中… ${Math.round((Date.now() - t0) / 1000)}s`; }, 500);
   // 后端出错会自动重试（最多 5 次）；取消时也通知后端，在下一次重试前停下
   const requestId = Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -139,7 +174,8 @@ async function run(mode) {
   try {
     const res = await api.post('/api/llm/fill', {
       mode, request_id: requestId, provider_id: m.provider_id, model_id: m.model_id, level: f.llm.level, safety: f.llm.safety,
-      description: f.llm.description, user_images: m.vision === true ? f.llm.images : [],
+      description: f.llm.description, user_images: images,
+      ...(vm && vm !== m ? { vision_provider_id: vm.provider_id, vision_model_id: vm.model_id } : {}),
       current_fields: { ...f.fields, aspect_ratio: f.aspect_ratio },
       character: { enabled: f.character_ref.enabled, images: f.character_ref.images },
       pose: { enabled: f.pose_ref.enabled, image: f.pose_ref.image, input_type: f.pose_ref.input_type },
@@ -148,6 +184,7 @@ async function run(mode) {
       persona_linked: f.llm.persona ? { id: f.llm.persona.id, outfit_id: f.llm.persona.outfit_id } : null,
     }, { signal: controller.signal });
     apply(res.fields);
+    renderRecognition(res.recognition);
     renderResearch(res.research);
     lastResult = `完成（${res.elapsed.toFixed(1)}s）`;
     for (const w of res.warnings || []) toast(w, 'warn', 6000);
@@ -176,6 +213,23 @@ function renderPersonaLink() {
       '已选用人设：', el('b', {}, lp.name), lp.outfit_name ? ` · ${lp.outfit_name}` : ' · 仅基础外观',
       el('button', { title: '不再关联这个人设', onclick: () => { setField('llm.persona', null); } }, '×')),
     on ? null : el('span', { class: 'muted small' }, '（人设匹配已关闭）'));
+}
+
+// ───────── 识图结果（识图模型对每张图的描述，原样交给了生成） ─────────
+function renderRecognition(rec) {
+  const box = $('#llm-vision');
+  if (!rec) { box.hidden = true; return; }
+  const ok = rec.items.filter(x => x.text).length;
+  const failed = rec.items.length - ok;
+  $('#llm-vision-sum').textContent = `识图结果：${ok} 张${failed ? `，${failed} 张失败` : ''}（${rec.model}）`;
+  fill($('#llm-vision-body'), ...rec.items.map(x => el('div', { class: 'vr-item' },
+    el('div', { class: 'rs-row' },
+      el('span', { class: 'rs-name' }, x.label.replace(/^\[|\]$/g, '')),
+      x.error ? el('span', { class: 'badge bad' }, '失败')
+        : el('span', { class: 'muted small' }, x.cached ? '缓存（同一张图没有重新识图）' : `${x.elapsed.toFixed(1)}s`)),
+    x.error ? el('div', { class: 'rs-alt small', style: { color: 'var(--danger)' } }, x.error)
+      : el('div', { class: 'vr-text' }, x.text))));
+  box.hidden = false;
 }
 
 // ───────── 联网检索的参考资料 ─────────
