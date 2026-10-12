@@ -1,0 +1,11 @@
+# Frontend + painter module (install into .venv). ComfyUI uses its own embedded Python.
+# Keep this file ASCII-only: pip on Chinese Windows reads it with the GBK locale encoding.
+fastapi==0.143.0
+uvicorn==0.54.0
+pydantic==2.13.4
+pydantic-settings==2.14.1
+httpx==0.28.1
+requests==2.33.1
+websocket-client==1.9.2
+pillow==12.2.0
+psutil==7.2.2

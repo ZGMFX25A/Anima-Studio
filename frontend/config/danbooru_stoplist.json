@@ -1,0 +1,18 @@
+{
+  "_comment": "从 Danbooru 共现标签中提取角色外貌时排除的标签（人数、构图、表情、背景、元数据等与外貌无关的）。修改后对之后新检索的角色生效。",
+  "tags": [
+    "1girl", "2girls", "3girls", "4girls", "multiple_girls", "1boy", "2boys", "multiple_boys", "solo", "solo_focus",
+    "looking_at_viewer", "looking_at_another", "looking_back", "looking_to_the_side", "looking_down", "looking_up",
+    "smile", "blush", "open_mouth", "closed_mouth", "closed_eyes", "one_eye_closed", "parted_lips", "teeth",
+    "upper_teeth_only", ":d", ":o", ":3", ";d", "tongue", "tongue_out", "sweat", "tears", "grin", "frown", "pout",
+    "simple_background", "white_background", "grey_background", "transparent_background", "gradient_background",
+    "upper_body", "full_body", "cowboy_shot", "portrait", "close-up", "from_behind", "from_side", "from_above",
+    "from_below", "standing", "sitting", "lying", "kneeling", "walking", "running", "holding", "hand_up", "arm_up",
+    "arms_up", "hands_up", "v", "outdoors", "indoors", "day", "night", "sky", "cloud", "blue_sky", "water",
+    "highres", "absurdres", "commentary", "commentary_request", "english_commentary", "translated",
+    "translation_request", "english_text", "japanese_text", "speech_bubble", "comic", "4koma", "monochrome",
+    "greyscale", "signature", "dated", "artist_name", "twitter_username", "watermark", "official_art",
+    "official_alternate_costume", "alternate_costume", "cosplay", "chibi", "game_cg", "multiple_views",
+    "character_name", "copyright_name", "blurry", "depth_of_field", "heart", "musical_note", "sparkle"
+  ]
+}

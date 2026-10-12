@@ -1,0 +1,4 @@
+  - {{name}}{{default}}
+    - 标签：{{tags}}
+    - 说明：{{desc}}
+    - 专属角色标签：{{character_tag}}

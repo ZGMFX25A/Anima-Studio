@@ -1,0 +1,1 @@
+This image has a left half and a right half, each filled with one solid color. Answer in exactly this format and nothing else: left: <color>, right: <color>. Use one common English color word for each.

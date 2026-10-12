@@ -1,0 +1,9 @@
+{
+  "_comment": "AI 填写时人设资料块里的固定文字。",
+  "persona_matched": "描述中提到「{{name}}」",
+  "persona_linked": "用户在绘图页选用了这个人设",
+  "persona_kind_original": "原创",
+  "persona_kind_existing": "已有作品角色",
+  "persona_default_outfit": "（默认）",
+  "persona_no_outfit": "  - （没有造型，服装按描述写）"
+}

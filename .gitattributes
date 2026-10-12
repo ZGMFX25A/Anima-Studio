@@ -1,0 +1,3 @@
+# cmd 解析只有 LF 的 .bat 时可能出错，检出时一律用 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf

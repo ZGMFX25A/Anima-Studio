@@ -1,0 +1,74 @@
+{
+  "text_encoder": "qwen_3_06b_base.safetensors",
+  "clip_type": "stable_diffusion",
+  "vae": "qwen_image_vae.safetensors",
+  "default_model": "anima-base",
+  "models": {
+    "anima-base": {
+      "file": "anima-base-v1.0.safetensors",
+      "label": "Anima Base v1.0",
+      "family": "anima-2b",
+      "defaults": {"steps": 30, "cfg": 4.0, "sampler_name": "er_sde", "scheduler": "simple"},
+      "features": {"character_ref": true, "pose_ref": true},
+      "notes": {
+        "pose_ref": "两个参考适配器均基于此模型训练，兼容性最好（高踢腿 PCK 0.82，4/4 跟随）",
+        "character_ref": "极端动作 + 人物参考时，人物参考图自身的姿势可能压过动作参考"
+      }
+    },
+    "anima-aesthetic": {
+      "file": "anima-aesthetic-v1.1.safetensors",
+      "label": "Anima Aesthetic v1.1",
+      "family": "anima-2b",
+      "defaults": {"steps": 30, "cfg": 4.0, "sampler_name": "er_sde", "scheduler": "simple"},
+      "features": {"character_ref": true, "pose_ref": true},
+      "notes": {
+        "pose_ref": "极端动作跟随较弱（约 1/2），中等动作正常"
+      }
+    },
+    "anima-turbo": {
+      "file": "anima-turbo-v1.1.safetensors",
+      "label": "Anima Turbo v1.1",
+      "family": "anima-2b",
+      "defaults": {"steps": 10, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple"},
+      "features": {"character_ref": true, "pose_ref": true},
+      "notes": {
+        "character_ref": "人物还原较弱（发色/画风会偏），速度快约 5 倍",
+        "pose_ref": "极端动作跟随较弱（约 1/4），中等动作正常"
+      }
+    },
+    "anima-2.9b-preview": {
+      "file": "Anima-2.9B-preview-v1.safetensors",
+      "label": "Anima 2.9B Preview v1",
+      "family": "anima-2.9b",
+      "defaults": {"steps": 30, "cfg": 4.0, "sampler_name": "er_sde", "scheduler": "simple"},
+      "features": {"character_ref": false, "pose_ref": false},
+      "notes": {
+        "character_ref": "不兼容：40 层架构，适配器只覆盖 28 层；参考帧会被原样复制",
+        "pose_ref": "不兼容：动作跟随 0/4，低于无控制基线"
+      }
+    },
+    "anima-2.9b-turbo-fuse": {
+      "file": "anima29b-sm29t-fuse1.1.safetensors",
+      "label": "Anima 2.9B Turbo 1.1 Fuse（非官方）",
+      "family": "anima-2.9b",
+      "source": "https://huggingface.co/Langzaigg/anima29b-turbo1.1-unofficial",
+      "defaults": {"steps": 10, "cfg": 1.0, "sampler_name": "euler_ancestral", "scheduler": "normal"},
+      "features": {"character_ref": false, "pose_ref": false},
+      "notes": {
+        "说明": "SilvermoonMix 2.9B Turbo 与 Anima Turbo 1.1 的块级融合（非官方）；cfg 1.0 时负向提示词无效，不想要的元素用正向写法规避（如 simple background）",
+        "character_ref": "不兼容：40 层架构，与 2.9B Preview 相同",
+        "pose_ref": "不兼容：40 层架构，与 2.9B Preview 相同"
+      }
+    }
+  },
+  "adapters": {
+    "character_ref": {
+      "lora": "anima-incontext-character.safetensors",
+      "lora_strength": 1.0
+    },
+    "pose_ref": {
+      "lora": "anima_pose_preview2.safetensors",
+      "lora_strength": 1.0
+    }
+  }
+}

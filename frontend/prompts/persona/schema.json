@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "display_name": {"type": "string"},
+    "count": {"type": "string"},
+    "base_tags": {"type": "string"},
+    "appearance_desc": {"type": "string"},
+    "outfits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "tags": {"type": "string"},
+          "desc": {"type": "string"},
+          "character_tag": {"type": "string"},
+          "default": {"type": "boolean"}
+        },
+        "required": ["name", "tags", "desc", "character_tag", "default"],
+        "additionalProperties": false
+      }
+    },
+    "unassigned": {"type": "string"},
+    "refusal": {"type": "string"}
+  },
+  "required": ["display_name", "count", "base_tags", "appearance_desc", "outfits", "unassigned", "refusal"],
+  "additionalProperties": false
+}

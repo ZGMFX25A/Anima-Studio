@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anima Studio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237c8cff'/%3E%3Cpath d='M9 23l7-14 7 14M12 18h8' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/persona.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">A</span>Anima Studio</div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="draw" class="active">绘图</button>
+    <button data-tab="personas">人设</button>
+    <button data-tab="history">历史</button>
+    <button data-tab="favorites">收藏</button>
+    <button data-tab="menu">菜单</button>
+  </nav>
+  <button class="status-pill" id="status-pill" title="查看引擎状态">
+    <span class="dot" id="status-dot"></span><span id="status-text">连接中…</span>
+  </button>
+</header>
+
+<main>
+<!-- ═══════════════════════ 绘图 ═══════════════════════ -->
+<section class="page draw active" id="page-draw">
+  <div class="params" id="params">
+
+    <!-- AI 填写 -->
+    <div class="card ai-card" id="ai-card">
+      <button class="card-head collapsible" data-collapse="ai-card">
+        <span class="card-title"><span class="spark">✦</span> AI 填写</span>
+        <span class="card-sub">根据描述自动填写下面的提示词字段</span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="card-body">
+        <textarea id="llm-desc" rows="3" data-bind="llm.description" placeholder="描述你想要的画面，中英文都可以。例如：初音未来在夏日海边奔跑，傍晚逆光，胶片感"></textarea>
+        <div class="llm-images-row">
+          <div class="dz-wrap" id="llm-images"></div>
+          <div class="llm-img-note muted" id="llm-img-note"></div>
+        </div>
+        <div class="grid3">
+          <label class="mini"><span>模型</span><select id="llm-model"></select></label>
+          <label class="mini"><span>思考</span><select id="llm-level"></select></label>
+          <label class="mini"><span>安全等级</span>
+            <select id="llm-safety" data-bind="llm.safety">
+              <option value="">不指定（由 LLM 判断）</option>
+              <option value="safe">safe</option>
+              <option value="sensitive">sensitive</option>
+              <option value="nsfw">nsfw</option>
+              <option value="explicit">explicit</option>
+            </select>
+          </label>
+        </div>
+        <div class="web-toggles">
+          <label class="switch-row" title="单独调用一次 LLM 识别描述中的作品角色与画师，再从角色库 / 画师库 / Danbooru 取标准名、外貌标签与画师标签">
+            <input type="checkbox" data-bind="llm.web_character"><span class="switch"></span><span>联网检索（角色 / 画师）</span>
+          </label>
+          <label class="switch-row" title="用 DanbooruSearch 按描述语义检索标准 Danbooru 标签作为参考">
+            <input type="checkbox" data-bind="llm.tag_reference"><span class="switch"></span><span>标签参考</span>
+          </label>
+          <label class="switch-row" title="描述里出现人设的名称或别名时，把人设资料（基础外观、造型、画师偏好）附进请求；本地匹配，不联网、不额外调用 LLM">
+            <input type="checkbox" data-bind="llm.persona_match"><span class="switch"></span><span>人设匹配</span>
+          </label>
+        </div>
+        <div class="persona-link" id="llm-persona-link" hidden></div>
+        <div class="hints" id="llm-hints"></div>
+        <div class="actions">
+          <span class="muted small" id="llm-status"></span>
+          <button class="btn ghost" id="llm-undo" disabled>撤销</button>
+          <button class="btn" id="llm-modify" title="在当前字段的基础上按描述修改">修改</button>
+          <button class="btn accent" id="llm-generate" title="根据描述重新生成全部字段（覆盖已有内容）">生成</button>
+        </div>
+        <details class="research" id="llm-research" hidden>
+          <summary id="llm-research-sum">参考资料</summary>
+          <div class="research-body" id="llm-research-body"></div>
+        </details>
+      </div>
+    </div>
+
+    <!-- 模型与采样 -->
+    <div class="card">
+      <div class="card-head"><span class="card-title">模型与采样</span></div>
+      <div class="card-body">
+        <div class="field">
+          <label class="fl"><b>model</b><i>模型</i></label>
+          <select id="model" data-bind="model"></select>
+          <div class="note" id="model-note"></div>
+        </div>
+        <div class="grid2">
+          <div class="field">
+            <label class="fl"><b>steps</b><i>步数</i></label>
+            <input type="number" id="steps" data-bind="steps" data-type="int" min="1" max="150">
+            <div class="range-hint" id="steps-hint"></div>
+          </div>
+          <div class="field">
+            <label class="fl"><b>cfg</b><i>提示词引导强度</i></label>
+            <input type="number" id="cfg" data-bind="cfg" data-type="float" min="1" max="30" step="0.1">
+            <div class="range-hint" id="cfg-hint"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 提示词 -->
+    <div class="card">
+      <div class="card-head"><span class="card-title">提示词</span></div>
+      <div class="card-body">
+        <div class="field">
+          <label class="fl"><b>quality_meta_year_safe</b><i>质量 / 元数据 / 年份 / 安全</i></label>
+          <input type="text" data-bind="fields.quality_meta_year_safe" data-field="quality_meta_year_safe" placeholder="masterpiece, best quality, highres, newest, year 2025, sensitive">
+        </div>
+        <div class="field">
+          <label class="fl"><b>aspect_ratio</b><i>画幅比例</i></label>
+          <div class="aspect-row">
+            <select id="aspect" data-bind="aspect_ratio" data-field="aspect_ratio"></select>
+            <span class="size-chip" id="size-chip"></span>
+          </div>
+          <div class="grid2 custom-size" id="custom-size" hidden>
+            <label class="mini"><span>宽</span><input type="number" data-bind="width" data-type="int" min="256" max="2048" step="16"></label>
+            <label class="mini"><span>高</span><input type="number" data-bind="height" data-type="int" min="256" max="2048" step="16"></label>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="field">
+            <label class="fl"><b>count</b><i>人数</i></label>
+            <input type="text" list="count-list" data-bind="fields.count" data-field="count" placeholder="1girl">
+            <datalist id="count-list"></datalist>
+          </div>
+          <div class="field">
+            <label class="fl"><b>series</b><i>作品 / 系列</i></label>
+            <input type="text" data-bind="fields.series" data-field="series" placeholder="honkai star rail">
+          </div>
+        </div>
+        <div class="field">
+          <label class="fl"><b>character</b><i>角色</i><button class="btn ghost small fl-btn" id="persona-pick" type="button" title="用人设的基础外观 + 造型填写 count / character / series / appearance">从人设选择</button></label>
+          <input type="text" data-bind="fields.character" data-field="character" placeholder="yunli (honkai star rail)">
+        </div>
+        <div class="field">
+          <label class="fl"><b>artist</b><i>画师（以 @ 开头）</i></label>
+          <input type="text" data-bind="fields.artist" data-field="artist" placeholder="仅在需要特定画风时填写，如 @fkey">
+          <div class="field-warn" id="artist-warn" hidden></div>
+        </div>
+        <div class="field">
+          <label class="fl"><b>appearance</b><i>外貌</i></label>
+          <textarea rows="2" data-bind="fields.appearance" data-field="appearance" placeholder="long hair, blue hair, twintails, aqua eyes, white dress"></textarea>
+        </div>
+        <div class="field">
+          <label class="fl"><b>action</b><i>动作</i></label>
+          <textarea rows="2" data-bind="fields.action" data-field="action" placeholder="standing, facing viewer, looking at viewer, smile, full body"></textarea>
+        </div>
+        <div class="field">
+          <label class="fl"><b>nltags</b><i>自然语言（英文）</i></label>
+          <textarea rows="3" data-bind="fields.nltags" data-field="nltags" placeholder="A girl stands on a quiet beach at sunset, warm backlight glowing through her hair."></textarea>
+        </div>
+        <div class="field" id="neg-field">
+          <label class="fl"><b>neg</b><i>负向提示词</i></label>
+          <textarea rows="3" data-bind="fields.neg" data-field="neg"></textarea>
+          <div class="field-note" id="neg-note" hidden>cfg = 1 时负向提示词不生效（无分类器引导，不计算负向条件）</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 参考 -->
+    <div class="card">
+      <div class="card-head"><span class="card-title">参考</span></div>
+      <div class="card-body">
+        <div class="ref-toggles">
+          <label class="switch-row" id="cr-toggle-row">
+            <input type="checkbox" id="cr-enabled" data-bind="character_ref.enabled">
+            <span class="switch"></span><span>人物参考</span>
+            <span class="muted small" id="cr-why"></span>
+          </label>
+          <label class="switch-row" id="pr-toggle-row">
+            <input type="checkbox" id="pr-enabled" data-bind="pose_ref.enabled">
+            <span class="switch"></span><span>动作参考</span>
+            <span class="muted small" id="pr-why"></span>
+          </label>
+        </div>
+        <div class="ref-zones" id="ref-zones">
+          <div class="ref-zone" id="cr-zone" hidden>
+            <div class="ref-zone-title">人物参考图 <span class="muted small">1~3 张，推荐 全身 + 脸部特写，中性站姿</span></div>
+            <div class="dz-wrap big" id="cr-images"></div>
+          </div>
+          <div class="ref-zone" id="pr-zone" hidden>
+            <div class="ref-zone-title">动作参考图
+              <span class="seg small" id="pr-type">
+                <button data-v="photo">照片</button><button data-v="skeleton">骨架图</button>
+              </span>
+            </div>
+            <div class="dz-wrap big" id="pr-image"></div>
+          </div>
+        </div>
+        <div class="hints" id="ref-hints"></div>
+        <details class="sub-details" id="ref-adv" hidden>
+          <summary>参考高级参数</summary>
+          <div class="grid2" id="cr-adv">
+            <label class="mini"><span>人物 strength（0–3，不像时 1.2–1.5）</span><input type="number" data-bind="character_ref.strength" data-type="float" min="0" max="3" step="0.05"></label>
+            <label class="mini"><span>生效区间</span>
+              <span class="pair"><input type="number" data-bind="character_ref.start_percent" data-type="float" min="0" max="1" step="0.05"><em>→</em><input type="number" data-bind="character_ref.end_percent" data-type="float" min="0" max="1" step="0.05"></span>
+            </label>
+          </div>
+          <div class="grid2" id="pr-adv">
+            <label class="mini"><span>动作 strength（0–2）</span><input type="number" data-bind="pose_ref.strength" data-type="float" min="0" max="2" step="0.05"></label>
+            <label class="mini"><span>骨架放置</span>
+              <select data-bind="pose_ref.fit">
+                <option value="person">person：按人物缩放占满（推荐）</option>
+                <option value="contain">contain：整张完整放入</option>
+                <option value="cover">cover：整张裁切填满</option>
+              </select>
+            </label>
+            <label class="mini"><span>人物留白（fit=person）</span><input type="number" data-bind="pose_ref.margin" data-type="float" min="0" max="0.4" step="0.01"></label>
+            <label class="mini"><span>多人时</span>
+              <select data-bind="pose_ref.persons"><option value="largest">只用最大的人物</option><option value="all">全部人物</option></select>
+            </label>
+            <div class="checks">
+              <label><input type="checkbox" data-bind="pose_ref.hands">手部</label>
+              <label><input type="checkbox" data-bind="pose_ref.face">面部</label>
+              <label><input type="checkbox" data-bind="pose_ref.feet">脚部</label>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <!-- 高级 -->
+    <details class="card adv-card" id="adv-card">
+      <summary class="card-head"><span class="card-title">高级</span><span class="card-sub">种子 · 采样器 · 调度器</span><span class="chev">▾</span></summary>
+      <div class="card-body">
+        <div class="field">
+          <label class="fl"><b>seed</b><i>种子</i></label>
+          <div class="seed-row">
+            <span class="seg" id="seed-mode"><button data-v="random">随机</button><button data-v="locked">锁定</button></span>
+            <input type="number" id="seed" data-bind="seed" data-type="int" min="0" placeholder="随机">
+            <button class="btn ghost small" id="seed-last" title="填入上一张图的种子并锁定">上一张</button>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="field">
+            <label class="fl"><b>sampler</b><i>采样器</i></label>
+            <select id="sampler" data-bind="sampler"></select>
+          </div>
+          <div class="field">
+            <label class="fl"><b>scheduler</b><i>调度器</i></label>
+            <select id="scheduler" data-bind="scheduler"></select>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <div class="gen-bar">
+      <button class="btn accent big" id="generate">生成 <kbd>Ctrl</kbd><kbd>Enter</kbd></button>
+    </div>
+  </div>
+
+  <!-- 预览 -->
+  <div class="preview">
+    <div class="stage" id="stage">
+      <div class="stage-empty" id="stage-empty">
+        <div class="stage-icon">✦</div>
+        <div>生成的图片会显示在这里</div>
+      </div>
+      <img id="stage-img" alt="" hidden>
+      <div class="stage-progress" id="stage-progress" hidden>
+        <div class="ring"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="track"/><circle cx="60" cy="60" r="52" class="bar" id="ring-bar"/></svg><span id="ring-pct">0%</span></div>
+        <div class="stage-stage" id="stage-stage">排队中</div>
+        <div class="muted small" id="stage-sub"></div>
+        <button class="btn ghost small" id="stage-cancel">取消</button>
+      </div>
+      <div class="stage-error" id="stage-error" hidden></div>
+    </div>
+    <div class="result-bar" id="result-bar" hidden>
+      <div class="result-meta" id="result-meta"></div>
+      <div class="result-actions">
+        <button class="btn ghost small" id="res-prompt">提示词</button>
+        <button class="btn ghost small" id="res-fav">☆ 收藏</button>
+        <button class="btn ghost small danger" id="res-delete">删除</button>
+        <button class="btn ghost small" id="res-reuse">复用</button>
+        <button class="btn ghost small" id="res-reveal">打开目录</button>
+      </div>
+    </div>
+    <div class="strip" id="strip"></div>
+  </div>
+</section>
+
+<!-- ═══════════════════════ 人设 ═══════════════════════ -->
+<section class="page personas" id="page-personas">
+  <div class="plist" id="persona-list"></div>
+  <div class="pdetail" id="persona-detail" hidden></div>
+</section>
+
+<!-- ═══════════════════════ 历史 / 收藏 ═══════════════════════ -->
+<section class="page gallery" id="page-history">
+  <div class="gallery-head"><h2>历史</h2><span class="muted" id="history-count"></span></div>
+  <div class="grid" id="history-grid"></div>
+  <div class="grid-foot" id="history-foot"></div>
+</section>
+<section class="page gallery" id="page-favorites">
+  <div class="gallery-head"><h2>收藏</h2><span class="muted" id="favorites-count"></span></div>
+  <div class="grid" id="favorites-grid"></div>
+  <div class="grid-foot" id="favorites-foot"></div>
+</section>
+
+<!-- ═══════════════════════ 菜单 ═══════════════════════ -->
+<section class="page menu" id="page-menu">
+  <aside class="menu-nav" id="menu-nav">
+    <button data-panel="engine" class="active">引擎</button>
+    <button data-panel="llm">LLM</button>
+    <button data-panel="web">联网</button>
+    <button data-panel="storage">存储</button>
+    <button data-panel="chars">角色库</button>
+    <button data-panel="artists">画师库</button>
+  </aside>
+  <div class="menu-body">
+    <div class="menu-panel active" id="panel-engine"></div>
+    <div class="menu-panel" id="panel-llm"></div>
+    <div class="menu-panel" id="panel-web"></div>
+    <div class="menu-panel" id="panel-storage"></div>
+    <div class="menu-panel" id="panel-chars"></div>
+    <div class="menu-panel" id="panel-artists"></div>
+  </div>
+</section>
+</main>
+
+<div id="modal-root"></div>
+<div id="toasts"></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

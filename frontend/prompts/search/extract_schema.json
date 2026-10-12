@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "characters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "name_en": {"type": "string"},
+          "series": {"type": "string"}
+        },
+        "required": ["name", "name_en", "series"],
+        "additionalProperties": false
+      }
+    },
+    "artists": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "name_en": {"type": "string"}
+        },
+        "required": ["name", "name_en"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["characters", "artists"],
+  "additionalProperties": false
+}

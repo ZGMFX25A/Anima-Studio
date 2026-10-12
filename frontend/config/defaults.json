@@ -1,0 +1,35 @@
+{
+  "_comment": "绘图页默认值与画幅预设。修改后刷新页面生效。",
+  "fields": {
+    "quality_meta_year_safe": "masterpiece, best quality, highres, newest, year 2025",
+    "count": "",
+    "character": "",
+    "series": "",
+    "artist": "",
+    "appearance": "",
+    "action": "",
+    "nltags": "",
+    "neg": "worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, chromatic aberration, bad anatomy, bad hands, extra fingers, missing fingers, extra limbs, deformed, text, watermark, logo, signature"
+  },
+  "aspect_ratio": "2:3",
+  "aspect_presets": {
+    "21:9": [1568, 672],
+    "16:9": [1360, 768],
+    "3:2": [1248, 832],
+    "4:3": [1152, 864],
+    "5:4": [1120, 896],
+    "1:1": [1024, 1024],
+    "4:5": [896, 1120],
+    "3:4": [864, 1152],
+    "2:3": [832, 1248],
+    "9:16": [768, 1360],
+    "9:21": [672, 1568]
+  },
+  "count_suggestions": ["1girl", "2girls", "1boy", "2boys", "1girl, 1boy", "1other", "no humans"],
+  "persona_preview": {
+    "_comment": "人设页「生成预览」的固定部分：quality 写进 quality_meta_year_safe（后面接所选分级）；composition 紧跟在主体后面（如 1girl, solo, cowboy shot, …）；neg 用上面的默认 neg。修改后刷新页面生效。",
+    "quality": "masterpiece, best quality, highres, newest, year 2025",
+    "composition": "solo, cowboy shot, looking at viewer, simple background",
+    "safety": "safe"
+  }
+}

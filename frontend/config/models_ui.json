@@ -1,0 +1,28 @@
+{
+  "_comment": "各模型推荐的 steps / cfg 范围（前端提示用）。来源：circlestone-labs/Anima 官方模型卡；2.9B 来自 Gazingstars123/Anima-2.9B 作者模型卡。",
+  "anima-base": {
+    "steps": [30, 50],
+    "cfg": [4, 5],
+    "source": "Anima 官方卡（通用建议：30–50 步，CFG 4–5）"
+  },
+  "anima-aesthetic": {
+    "steps": [30, 50],
+    "cfg": [4, 5],
+    "source": "Anima 官方卡（通用建议：30–50 步，CFG 4–5）"
+  },
+  "anima-turbo": {
+    "steps": [8, 12],
+    "cfg": [1, 1],
+    "source": "Anima 官方卡：Turbo 使用 CFG 1、8–12 步"
+  },
+  "anima-2.9b-preview": {
+    "steps": [28, 50],
+    "cfg": [3.5, 5],
+    "source": "Anima-2.9B 作者卡：28–50 步（最高质量 50 步），CFG 3.5–5"
+  },
+  "anima-2.9b-turbo-fuse": {
+    "steps": [8, 12],
+    "cfg": [1, 1],
+    "source": "Langzaigg/anima29b-turbo1.1-unofficial 作者卡：10 步（8–12），CFG 固定 1.0，Euler a + normal，不使用负向"
+  }
+}
