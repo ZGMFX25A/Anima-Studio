@@ -1,6 +1,6 @@
 """OpenAI 兼容 / Anthropic 两种格式的 LLM 调用：拉取模型列表、对话、测试。
 
-对话接口（协议）有三种：Chat Completions、Responses、Messages（Anthropic）。每个模型第一次调用时
+对话接口（协议）有四种：Chat Completions、Responses、Messages（Anthropic）、Gemini（generateContent）。每个模型第一次调用时
 按优先级自动尝试，接口明确表示不支持就换下一种；试通后记到模型的 protocol 里，以后直接用。"""
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ ANTHROPIC_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 BUDGETS = {"low": 2048, "medium": 8192, "high": 16000}
 MAX_TOKENS = 16000
 _LEVEL_TEXT = {"off": "不思考", "on": "思考", "default": "模型默认", "auto": "自动"}
-PROTOCOLS = ["chat", "responses", "messages"]
-PROTOCOL_TEXT = {"chat": "Chat Completions", "responses": "Responses", "messages": "Messages"}
+PROTOCOLS = ["chat", "responses", "messages", "gemini"]
+PROTOCOL_TEXT = {"chat": "Chat Completions", "responses": "Responses", "messages": "Messages", "gemini": "Gemini"}
 _EFFORT_LEVELS = ("minimal", "low", "medium", "high", "xhigh", "max")
 
 
@@ -59,6 +59,8 @@ def _headers(p: dict, proto: str | None = None) -> dict:
         else:
             h["x-api-key"] = key
         return h
+    if proto == "gemini":                # Google 官方认 x-goog-api-key，中转多认 Bearer：两种都带
+        return {"x-goog-api-key": key, "authorization": f"Bearer {key}", "content-type": "application/json"}
     return {"authorization": f"Bearer {key}", "content-type": "application/json"}
 
 
@@ -217,15 +219,18 @@ def _is_openai_family(model_id: str) -> bool:
 
 
 def protocol_order(p: dict, m: dict) -> list[str]:
-    """尝试接口的顺序：记住的接口最先；其次按模型名（claude / gpt 系）；再按服务商格式。"""
-    if "claude" in m["id"].lower():
-        order = ["messages", "chat", "responses"]
+    """尝试接口的顺序：记住的接口最先；其次按模型名（claude / gpt 系 / gemini）；再按服务商格式。"""
+    mid = m["id"].lower()
+    if "claude" in mid:
+        order = ["messages", "chat", "responses", "gemini"]
+    elif "gemini" in mid:
+        order = ["gemini", "chat", "responses", "messages"]
     elif _is_openai_family(m["id"]):
-        order = ["responses", "chat", "messages"]
+        order = ["responses", "chat", "messages", "gemini"]
     elif p["format"] == "anthropic":
-        order = ["messages", "chat", "responses"]
+        order = ["messages", "chat", "responses", "gemini"]
     else:
-        order = ["chat", "responses", "messages"]
+        order = ["chat", "responses", "messages", "gemini"]
     if m.get("protocol") in PROTOCOLS:
         order = [m["protocol"]] + [x for x in order if x != m["protocol"]]
     return order
@@ -245,7 +250,7 @@ def _wrong_protocol(status: int, low: str) -> bool:
 def chat(p: dict, m: dict, level: str, system: str, parts: list[dict], schema: dict | None) -> dict:
     """发送一次对话。parts: [{"type":"text","text":...} | {"type":"image","media_type":...,"data":b64}]。
 
-    按 protocol_order 依次尝试三种接口，接口明确不支持就换下一种，试通后记到模型的 protocol。
+    按 protocol_order 依次尝试各种接口，接口明确不支持就换下一种，试通后记到模型的 protocol。
     遇到接口不支持的参数（结构化输出 / 关闭思考 / 思考强度）会自动降级重试，并把结论记到模型设置里。
     返回 {"text", "request" (去掉图片数据), "attempts", "elapsed", "level"（实际使用的档位）,
     "level_note"（档位被自动改掉时给用户的提示，否则 None）, "protocol"（实际使用的接口）}。
@@ -265,7 +270,7 @@ def chat(p: dict, m: dict, level: str, system: str, parts: list[dict], schema: d
         if m.get("protocol") == proto:   # 记住的接口不再可用（例如中转改了）：清掉，重新按优先级试
             m["protocol"] = None
             store.update_model(p["id"], m["id"], {"protocol": None})
-    raise LLMError("三种接口都不支持该模型。" + "；".join(fails), 400)
+    raise LLMError(f"{len(fails)} 种接口都不支持该模型。" + "；".join(fails), 400)
 
 
 def _chat_with(p, m, proto, level, system, parts, schema, attempts) -> dict | None:
@@ -282,6 +287,8 @@ def _chat_with(p, m, proto, level, system, parts, schema, attempts) -> dict | No
             url, body = _anthropic_body(p, m, thinking, level, system, parts, fmt_schema, use_effort)
         elif proto == "responses":
             url, body = _responses_body(p, m, thinking, level, system, parts, fmt_schema, json_mode, use_effort)
+        elif proto == "gemini":
+            url, body = _gemini_body(p, m, thinking, level, system, parts, fmt_schema, json_mode, use_effort)
         else:
             url, body = _openai_body(p, m, thinking, level, system, parts, fmt_schema, json_mode, use_effort)
         try:
@@ -305,7 +312,7 @@ def _chat_with(p, m, proto, level, system, parts, schema, attempts) -> dict | No
                 return None
             raise LLMError(f"HTTP {r.status_code}：{msg}", r.status_code)
         # —— 自动降级 ——
-        if use_format and any(s in low for s in ("format", "schema", "response_format", "output_config")) \
+        if use_format and any(s in low for s in ("format", "schema", "response_format", "output_config", "mime")) \
                 and "effort" not in low:
             if proto != "messages" and json_mode == "schema":
                 json_mode = "object"
@@ -367,7 +374,7 @@ def _anthropic_body(p, m, thinking, level, system, parts, schema, use_effort):
 
 def _sent_thinking(body: dict) -> bool:
     return any(k in body for k in ("reasoning_effort", "reasoning", "thinking", "enable_thinking")) or \
-        "effort" in body.get("output_config", {})
+        "effort" in body.get("output_config", {}) or "thinkingConfig" in body.get("generationConfig", {})
 
 
 def _openai_body(p, m, thinking, level, system, parts, schema, json_mode, use_effort):
@@ -428,9 +435,43 @@ def _responses_body(p, m, thinking, level, system, parts, schema, json_mode, use
     return f"{_openai_base(p)}/responses", body
 
 
+def _gemini_body(p, m, thinking, level, system, parts, schema, json_mode, use_effort):
+    content = []
+    for x in parts:
+        if x["type"] == "text":
+            content.append({"text": x["text"]})
+        else:
+            content.append({"inline_data": {"mime_type": x["media_type"], "data": x["data"]}})
+    body: dict = {"contents": [{"role": "user", "parts": content}]}
+    if system:
+        body["systemInstruction"] = {"parts": [{"text": system}]}
+    gc: dict = {}
+    style = thinking.get("mode") if level != "default" else None   # 模型默认：不发送思考参数
+    if use_effort and style not in (None, "none"):
+        if level == "off":
+            gc["thinkingConfig"] = {"thinkingBudget": 0}
+        elif level in _EFFORT_LEVELS:
+            gc["thinkingConfig"] = {"thinkingLevel": level}
+    if schema:
+        gc["responseMimeType"] = "application/json"
+        if json_mode == "schema":
+            gc["responseJsonSchema"] = schema
+    if gc:
+        body["generationConfig"] = gc
+    base = _openai_base(p)
+    if base.endswith("/openai"):         # Google 官方的 OpenAI 兼容地址 …/v1beta/openai → 原生 …/v1beta
+        base = base[:-7]
+    mid = m["id"][7:] if m["id"].startswith("models/") else m["id"]
+    return f"{base}/models/{mid}:generateContent", body
+
+
 def _extract_text(proto: str, d: dict) -> str:
     if proto == "messages":
         return "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text")
+    if proto == "gemini":
+        cand = (d.get("candidates") or [{}])[0]
+        return "".join(x.get("text", "") for x in (cand.get("content") or {}).get("parts") or []
+                       if not x.get("thought"))
     if proto == "responses":
         if isinstance(d.get("output_text"), str) and d["output_text"]:
             return d["output_text"]
@@ -446,6 +487,10 @@ def _extract_text(proto: str, d: dict) -> str:
 def _sanitize(body: dict) -> dict:
     """日志用：把图片数据替换成尺寸说明。"""
     b = copy.deepcopy(body)
+    for msg in b.get("contents", []):
+        for part in msg.get("parts") or []:
+            if "inline_data" in part:
+                part["inline_data"]["data"] = f"<image {len(part['inline_data']['data']) * 3 // 4} bytes>"
     for msg in b.get("messages", []) + b.get("input", []):
         if not isinstance(msg.get("content"), list):
             continue
