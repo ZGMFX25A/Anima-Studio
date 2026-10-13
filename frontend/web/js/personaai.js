@@ -13,7 +13,7 @@ function setStatus(t) {
   if (n) n.textContent = t;
 }
 
-// 后端出错会自动重试（最多 3 次）；中止时同时通知后端，在下一次重试前停下，不再消耗额度
+// 后端出错会自动重试（最多 2 次，共 3 次请求）；中止时同时通知后端，在下一次重试前停下，不再消耗额度
 function cancellable() {
   const ctl = new AbortController();
   ctl.rid = Math.random().toString(36).slice(2) + Date.now().toString(36);

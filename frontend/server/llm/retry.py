@@ -1,7 +1,7 @@
 """LLM 请求的自动重试与取消（AI 填写、识别角色、人设 AI 拆分 / 整理共用）。
 
 出错最多再试 MAX_RETRIES 次（共 1 + MAX_RETRIES 次请求），仍失败才报错：
-- 连接失败 / 超时、429、5xx：依次等待 2 / 4 / 6 秒后重试；
+- 连接失败 / 超时、429、5xx：依次等待 2 / 4 秒后重试；
 - 返回非 JSON、JSON 缺少应有的字段、模型拒绝：立即重试；
 - 401 / 403 / 404 / 400 等请求本身的问题：不重试。
 页面点「取消」时调用 cancel(request_id)，在下一次重试前停下。
@@ -16,7 +16,7 @@ from typing import Callable
 
 from . import client
 
-MAX_RETRIES = 3
+MAX_RETRIES = 2
 # 模型用自然语言拒绝（而不是输出 JSON）时常见的说法
 REFUSAL_HINTS = ("i can't", "i cannot", "i can’t", "i'm sorry", "i’m sorry", "i am sorry", "i won't", "i will not",
                  "unable to", "not able to", "cannot assist", "can't help", "抱歉", "无法", "不能", "很遗憾", "违反")
