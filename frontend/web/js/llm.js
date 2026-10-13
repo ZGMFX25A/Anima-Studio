@@ -164,7 +164,7 @@ async function run(mode) {
   const first = [recognize && '识图', f.llm.web_character && '识别角色'].filter(Boolean).join(' + ');
   const stages = [first, (f.llm.web_character || f.llm.tag_reference) && '检索', '生成'].filter(Boolean);
   const tick = setInterval(() => { $('#llm-status').textContent = `${stages.join(' → ')}中… ${Math.round((Date.now() - t0) / 1000)}s`; }, 500);
-  // 后端出错会自动重试（最多 5 次）；取消时也通知后端，在下一次重试前停下
+  // 后端出错会自动重试（最多 3 次）；取消时也通知后端，在下一次重试前停下
   const requestId = Math.random().toString(36).slice(2) + Date.now().toString(36);
   const cancelBtn = el('button', { class: 'btn ghost small', onclick: () => {
     controller?.abort();
