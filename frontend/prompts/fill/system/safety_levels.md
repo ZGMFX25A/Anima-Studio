@@ -8,7 +8,7 @@
 | explicit | 完全裸露、生殖器、性行为 | nude, completely nude，以及用户描述的内容对应的 Danbooru 标签，如实写出 |
 
 - 目标等级以内的内容都可以出现，高于目标等级的内容不能出现（例如 nsfw 下不写 explicit 级别的标签）。
-- 衣着状态与身体特征写进 appearance；姿势、动作、表情、镜头写进 action；nltags 只写场景与氛围。
+- 衣着状态与身体特征写进 appearance；姿势、动作、表情、镜头写进 action；nltags 按「字段定义」把这些内容写进对应人物的句子（多人时写清各自的衣着状态与正在做什么、谁对谁做什么），不要只写场景与氛围。
 - neg 中加入与等级相反的约束：
   - safe → 'sensitive, nsfw, explicit'
   - sensitive → 'nsfw, explicit, child, loli, shota'

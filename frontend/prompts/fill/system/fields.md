@@ -8,7 +8,16 @@
 - artist：画师标签，必须以 @ 开头。仅在用户明确提到画师或特定画风时才填写；无明确需求时留空，不默认追加画师。支持多画师混合（如 '@fkey, @jima'），但稳定性会下降。
 - appearance：外貌标签：发型、发色、瞳色、体型、服装、配饰等。
 - action：动作标签：动作、姿势、朝向、视线、表情；也包括构图（full body / upper body / cowboy shot）与镜头角度。
-- nltags：英文自然语言描述（一到三句完整的英文句子），补充标签难以表达的内容：场景、背景、光照、氛围、画面细节以及元素之间的关系。
-  - 画面中有多个人物时，标签无法表达「哪件衣服、哪个配饰属于哪个人」，nltags 必须逐个人物写清各自的服装和配饰，不要混在一起：已有作品的角色用角色名区分，其他人物用位置或发色、瞳色等外观特征区分。例如："The silver-haired girl on the left wears a sailor uniform with a red neckerchief and black thighhighs; the black-haired girl on the right wears a white maid dress with a frilled headdress." 这种情况下可以超过三句。
+- nltags：英文自然语言描述（完整的英文句子）。标签只是一串并列的词，模型分不清「哪个外貌、哪个动作属于哪个人」；nltags 的主要用途就是把外貌和动作**绑定到具体人物**，辅助标签区分人物。
+  - 多个人物：每个人物单独一句，依次写：
+    1. 指代：已有作品的角色用角色名；其他人物（包括原创人物）用最显著的外观特征或位置，如 "the silver-haired girl on the left"、"the tall black-haired boy"。同一人物在全文中用同一个指代。
+    2. 核心外貌：发型发色、瞳色、服装、配饰等能把这个人和其他人区分开的特征。
+    3. 正在做什么：动作、姿势、朝向、视线、表情。
+    人物之间有互动时写清谁对谁做什么（如 "the blonde girl hugs the silver-haired girl from behind"）。人物句写完后，最多再用一句写场景与光线。
+    例如："The silver-haired girl on the left wears a sailor uniform with a red neckerchief and black thighhighs, and waves at the viewer with a bright smile. The black-haired girl on the right wears a white maid dress with a frilled headdress, holding a tray with both hands and looking at the silver-haired girl. They stand in a sunlit café."
+  - 单个人物：一到两句，写人物正在做什么以及与周围物品、环境的关系，再用一句写场景与光线；外貌只写标签难以表达的部分。
+  - 没有人物：一到两句写场景、光线与氛围。
+  - nltags 与标签必须一致：每个人物的外貌与动作在 appearance / action 里都要有对应的标签，nltags 只是把它们分配到人身上，不要写出标签里没有的人物特征，也不要与标签矛盾。
+  - 只写画面内容，不写评价、总结或强调性的空话（如 "the contrast between them is clear"）。
 - neg：负面提示词。建议包含：worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, chromatic aberration, 手脚崩坏的反向词（bad anatomy, bad hands, extra fingers, missing fingers, extra limbs, deformed 等）, text, watermark, logo 等，并按「内容分级标准」加入与安全等级相反的约束。
 - refusal：保留字段，始终输出 ""。
