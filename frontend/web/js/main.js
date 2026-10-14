@@ -1,5 +1,5 @@
 // 入口：读取能力与默认值、初始化各页面、标签切换、顶栏状态。
-import { api } from './api.js';
+import { api, setOomHint } from './api.js';
 import { $, $$, toast } from './ui.js';
 import { app, loadForm, on, emit } from './store.js';
 import { initDraw } from './draw.js';
@@ -29,6 +29,7 @@ async function refreshStatus() {
   clearTimeout(statusTimer);
   try {
     const s = await api.get('/api/system/status');
+    setOomHint(s.comfyui.gpu?.oom_hint);
     emit('status', s);
     const c = s.comfyui.state, p = s.painter.state;
     const dot = $('#status-dot');
@@ -40,7 +41,7 @@ async function refreshStatus() {
     } else if (c === 'starting' || p === 'starting' || c === 'stopping') {
       cls = 'warn'; text = c === 'stopping' ? '引擎停止中' : '引擎启动中…';
     } else if (c === 'stopped') {
-      cls = 'bad'; text = '引擎已停止';
+      cls = 'bad'; text = s.comfyui.blocked ? '引擎未启动 · 原因见 菜单 → 引擎' : '引擎已停止';
     } else if (p !== 'running') {
       cls = 'bad'; text = '绘画模块未运行';
     } else {

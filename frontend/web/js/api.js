@@ -25,12 +25,16 @@ export class ApiError extends Error {
   }
 }
 
+// 显存不足时追加的建议（AMD 显卡：启动参数加 --enable-dynamic-vram），由顶栏状态轮询更新
+let oomHint = '';
+export function setOomHint(text) { oomHint = text || ''; }
+
 export function errorText(e) {
   if (!e) return '';
   const base = CODE_TEXT[e.code];
   const msg = e.message || '';
-  if (base && msg && !msg.includes(base)) return `${base}：${msg}`;
-  return msg || base || '未知错误';
+  const text = base && msg && !msg.includes(base) ? `${base}：${msg}` : (msg || base || '未知错误');
+  return e.code === 'OUT_OF_MEMORY' && oomHint ? `${text}；${oomHint}` : text;
 }
 
 async function request(method, url, body, opts = {}) {
