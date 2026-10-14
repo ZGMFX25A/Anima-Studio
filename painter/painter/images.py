@@ -64,7 +64,23 @@ def to_png(img: Image.Image) -> bytes:
     return buf.getvalue()
 
 
+def a1111_text(positive: str, negative: str, params: dict) -> str:
+    """A1111 / WebUI 的 parameters 文本（WebUI「PNG 图片信息」、Civitai 等都认）。
+    前端迁移旧图时用同样的写法（frontend/server/imagemeta.py），改动要两边一致。"""
+    lines = [positive]
+    if negative:
+        lines.append(f"Negative prompt: {negative}")
+    kv = [("Steps", params.get("steps")), ("Sampler", params.get("sampler_name")),
+          ("Schedule type", params.get("scheduler")), ("CFG scale", params.get("cfg")),
+          ("Seed", params.get("seed")),
+          ("Size", f"{params['width']}x{params['height']}" if params.get("width") and params.get("height") else None),
+          ("Model", params.get("model")), ("Version", "Anima Studio")]
+    lines.append(", ".join(f"{k}: {v}" for k, v in kv if v not in (None, "")))
+    return "\n".join(lines)
+
+
 def encode_output(png_bytes: bytes, fmt: str, quality: int, metadata: dict | None) -> tuple[bytes, int, int]:
+    """metadata：写进 PNG 的 anima_painter 文本块（JSON），同时按它写一份 A1111 格式的 parameters。"""
     img = Image.open(io.BytesIO(png_bytes))
     img.load()
     buf = io.BytesIO()
@@ -73,6 +89,9 @@ def encode_output(png_bytes: bytes, fmt: str, quality: int, metadata: dict | Non
         if metadata is not None:
             info = PngImagePlugin.PngInfo()
             info.add_text("anima_painter", json.dumps(metadata, ensure_ascii=False))
+            prompt = metadata.get("prompt") or {}
+            info.add_text("parameters", a1111_text(prompt.get("positive", ""), prompt.get("negative", ""),
+                                                   metadata.get("params") or {}))
         img.save(buf, "PNG", pnginfo=info, compress_level=4)
     elif fmt == "webp":
         img.save(buf, "WEBP", quality=quality, method=4)

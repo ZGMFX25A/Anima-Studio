@@ -1,0 +1,4 @@
+{
+  "_comment": "占位符的取值：图片里没有负向提示词时，user.md 的 {{negative}} 用 empty。",
+  "empty": "（无）"
+}

@@ -5,6 +5,7 @@ import { $, el, fill, toast, toastError, confirmDialog } from './ui.js';
 let s = null;
 let draft = null;      // 尚未保存的输入，重绘时保留
 let busy = '';
+let metaResult = '';    // 上次「写入生成参数」的结果
 
 export async function renderStorage() {
   try { s = await api.get('/api/storage'); } catch (e) { toastError(e); return; }
@@ -63,5 +64,29 @@ function draw() {
         el('br'), '已经生成的图片不会移动，历史和收藏照常可用。'),
       s.pending_restart ? el('div', { class: 'hint warn' },
         s.painter_external ? '绘画模块不是由本程序启动的，无法确认它正在使用的目录；点「保存」会重启它并使设置生效。'
-          : '绘画模块仍在使用旧目录，点「保存」重启后生效。') : null));
+          : '绘画模块仍在使用旧目录，点「保存」重启后生效。') : null),
+    el('div', { class: 'svc' },
+      el('div', { class: 'svc-head' }, el('h3', {}, '图片里的生成参数'),
+        el('div', { class: 'svc-btns' },
+          btn('补写旧图', 'meta', () => migrateMeta(false)),
+          btn('全部重写', 'meta-force', () => migrateMeta(true), 'ghost'))),
+      el('div', { class: 'hint' },
+        '生成的 PNG 里写有两份参数：anima_painter（本程序用，含各字段原值）与 A1111 格式的 parameters（WebUI、Civitai 等能识别）。',
+        el('br'), '「补写旧图」给历史 / 收藏 / 人设预览里还没有新格式参数的图片补上（启动时已自动执行过一次）；「全部重写」按图库记录重新写一遍。',
+        el('br'), '只替换图片里的文本块，像素数据原样保留，文件修改时间不变。'),
+      metaResult ? el('div', { class: 'hint' }, metaResult) : null));
+}
+
+async function migrateMeta(force) {
+  if (force && !await confirmDialog('全部重写生成参数？', '会按图库记录重新写入所有图片的生成参数文本块（像素不变）。', '重写')) return;
+  busy = force ? 'meta-force' : 'meta';
+  draw();
+  try {
+    const r = await api.post('/api/image-meta/migrate', { force });
+    metaResult = `共 ${r.total} 条记录：写入 ${r.updated} 张，已是新格式 ${r.skipped} 张` +
+      (r.missing ? `，文件丢失 ${r.missing} 张` : '') + (r.unsupported ? `，非 PNG ${r.unsupported} 张` : '') +
+      (r.failed ? `，失败 ${r.failed} 张（详见 logs/frontend.log，可能是文件被占用，稍后再试）` : '');
+    toast('生成参数写入完成', r.failed ? 'warn' : 'ok');
+  } catch (e) { toastError(e); }
+  finally { busy = ''; draw(); }
 }

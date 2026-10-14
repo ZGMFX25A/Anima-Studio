@@ -231,8 +231,11 @@ class JobManager:
         out_dir.mkdir(parents=True, exist_ok=True)
         fmt = req.output.format
         ext = {"png": "png", "webp": "webp", "jpeg": "jpg"}[fmt]
-        meta = {"params": p.model_dump(), "prompt": req.prompt.model_dump(), "job_id": job.job_id} \
-            if req.output.embed_metadata else None
+        # v2：client_meta.form 是前端放进来的各字段原值与画幅、参考设置（不含参考图），读图时据此还原到各字段
+        meta = {"format": "anima-studio/image", "version": 2, "job_id": job.job_id, "params": p.model_dump(),
+                "prompt": req.prompt.model_dump()} if req.output.embed_metadata else None
+        if meta is not None and isinstance(req.client_meta.get("form"), dict):
+            meta["form"] = req.client_meta["form"]
         files = self.files.setdefault(job.job_id, {})
         for node_id, kind in wf.outputs.items():
             imgs = hist.get("outputs", {}).get(node_id, {}).get("images", [])

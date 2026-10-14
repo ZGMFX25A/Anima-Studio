@@ -50,7 +50,7 @@ export function reuseDialog(rec) {
   });
 }
 
-export function applyRecord(rec, withSeed) {
+export function applyRecord(rec, withSeed, what = '已复用设置') {
   const base = defaultForm();
   const f = structuredClone(rec.form || {});
   const keepLlm = app.form.llm;           // 保留当前 LLM 选择，只恢复描述与灵感图
@@ -72,5 +72,5 @@ export function applyRecord(rec, withSeed) {
   saveForm();
   emit('form-replaced');
   emit('goto', 'draw');
-  toast(withSeed ? `已复用设置并锁定种子 ${rec.seed}` : '已复用设置', 'ok');
+  toast(withSeed ? `${what}并锁定种子 ${rec.seed}` : what, 'ok');
 }

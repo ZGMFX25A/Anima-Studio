@@ -1,0 +1,48 @@
+{
+  "type": "object",
+  "properties": {
+    "quality_meta_year_safe": {
+      "type": "string"
+    },
+    "count": {
+      "type": "string"
+    },
+    "character": {
+      "type": "string"
+    },
+    "series": {
+      "type": "string"
+    },
+    "artist": {
+      "type": "string"
+    },
+    "appearance": {
+      "type": "string"
+    },
+    "action": {
+      "type": "string"
+    },
+    "nltags": {
+      "type": "string"
+    },
+    "neg": {
+      "type": "string"
+    },
+    "refusal": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "quality_meta_year_safe",
+    "count",
+    "character",
+    "series",
+    "artist",
+    "appearance",
+    "action",
+    "nltags",
+    "neg",
+    "refusal"
+  ],
+  "additionalProperties": false
+}

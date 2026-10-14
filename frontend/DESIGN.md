@@ -580,3 +580,58 @@ AI 填写卡片里的两个开关（「联网检索（角色 / 画师）」「�
 | POST | `/api/personas/cards/import` | `{data: PNG 的 data URL, on_conflict: ""\|overwrite\|rename\|skip}`；重名且未给 `on_conflict` 时返回 409 `NAME_CONFLICT`，`detail` 含 `conflict`、`suggested_name`；成功返回 `{status: created\|overwritten\|skipped, persona, source: anima\|sillytavern, renamed_from, dropped_aliases, notes}` |
 
 代码：`server/personacard.py`、`web/js/personacard.js`。
+
+---
+
+## 14. 图片里的生成参数与「从图片读取」（2026-10-14 新增）
+
+### 14.0 已确认的决定
+
+| # | 问题 | 决定 |
+|---|---|---|
+| 1 | 读取优先级 | 先读 `anima_painter`，其次 A1111 `parameters`（PNG 文本块 / JPEG、WebP 的 EXIF UserComment）、ComfyUI `prompt` 工作流、NovelAI `Comment` |
+| 2 | 种子 | 读本程序的图时可选「保持相同种子」（勾选状态记在浏览器本地）；其它来源的图只读提示词 |
+| 3 | 参考图 | 本机图库有这张图的记录（按 job_id）时等同「复用」，参考图一并恢复；没有记录（别人的图）时提示参考图不在图片里，参考开关关闭 |
+| 4 | 其它来源的拆分 | AI 拆分（用 AI 填写卡片选的模型）或规则粗分，可在弹窗里选，选择记在浏览器本地；没有 LLM 时只能规则粗分 |
+| 5 | 旧图迁移 | 启动时后台自动执行一次（完成后留标记 `data/image_meta_v2.done`）；菜单 → 存储 可手动「补写旧图」/「全部重写」 |
+
+### 14.1 写入格式
+
+绘画模块保存 PNG 时写两个文本块（`painter/painter/images.py`）：
+
+- `anima_painter`（JSON）：`{format: "anima-studio/image", version: 2, job_id, params, prompt: {positive, negative}, form}`。
+  `params` 是绘画模块实际使用的参数（含种子）；`form` 由前端通过 `client_meta.form` 传入（`server/imagemeta.py` 的 `form_subset`）：
+  各字段原值、画幅、宽高、采样器 / 调度器选择、参考设置（人物参考只记张数，不含参考图；动作参考不含图）。不含 AI 描述与人设。
+  2026-10-14 前的 v1 只有 `params`、`prompt`、`job_id`。
+- `parameters`（A1111 格式）：`正向\nNegative prompt: 负向\nSteps: …, Sampler: …, Schedule type: …, CFG scale: …, Seed: …, Size: WxH, Model: …, Version: Anima Studio`。
+  采样器写 ComfyUI 的名字。前端迁移用同一写法（`imagemeta.a1111_text`），改动要两边同步。
+
+### 14.2 从图片读取（绘图页）
+
+参数栏顶部「从图片读取提示词」：点击选择、选中后 Ctrl+V 粘贴，或把图片拖到参数栏任意位置（落在参考图 / 灵感图上传框里的仍归上传框）。弹窗显示来源、正 / 负向提示词、参数与选项：
+
+| 图片 | 应用后 |
+|---|---|
+| 本程序生成，本机图库有记录 | 同「复用」：字段、模型、采样参数、画幅、参考开关与参考图、AI 描述 |
+| 本程序生成（v2），本机没有记录 | 字段、模型（本机没有时用默认模型并提示）、steps / cfg / 采样器 / 调度器、画幅；参考开关关闭，原图用了参考时提示 |
+| 本程序生成（v1），本机没有记录 | 整段提示词按所选方式拆到字段，其余同上 |
+| 其它工具 | 只把提示词拆到各字段（覆盖全部字段），模型、采样参数、画幅、种子不动 |
+
+- **AI 拆分**：`prompts/import/`，只分类不改写；代码校验原文每个标签都出现在某个字段里，漏掉的补进 appearance / neg 并提示；artist 补 @。出错自动重试同 AI 填写，弹窗关闭即取消。
+- **规则粗分**：质量 / 年份 / 安全 / score 词 → quality_meta_year_safe；`1girl`、`solo`、`no humans` 等 → count；`@xxx`、`artist:xxx` → artist；第一个「名字 (作品)」→ character；5 个词以上的长句 → nltags；其余 → appearance；负向 → neg。
+- 没有参数时提示「聊天软件或网站压缩过的图片会丢掉参数，请用原图」。
+
+### 14.3 旧图迁移
+
+按图库记录（历史、收藏、人设预览）给还在的 PNG 补写 v2 `anima_painter` 与 `parameters`：`form` 来自记录的表单；图片里已有 v1 块时沿用其中更全的 `params`（model_file、stages）。
+只替换这两个文本块（放在 IHDR 之后），其它块逐字节原样保留并校验；先写临时文件再替换，保留修改时间。已是 v2 的跳过（「全部重写」时也重写）；文件被占用等失败的记在 `logs/frontend.log`，标记不写，下次启动重试。
+
+### 14.4 接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/image-meta/read` | `{data: 图片 data URL}` → `{source: anima\|a1111\|comfyui\|novelai, source_label, positive, negative, seed, …}`；anima 另有 `version`、`job_id`、`params`、`form`、`record`（本机图库记录，没有为 null）；其它来源另有 `info`（原图参数）。没有参数时 422 `NO_METADATA` |
+| POST | `/api/image-meta/split` | `{mode: ai\|rule, positive, negative, provider_id, model_id, level, request_id}` → `{fields, warnings, elapsed}` |
+| POST | `/api/image-meta/migrate` | `{force}` → `{total, updated, skipped, missing, unsupported, failed}` |
+
+代码：`server/imagemeta.py`、`server/llm/imgsplit.py`、`web/js/imgread.js`。
