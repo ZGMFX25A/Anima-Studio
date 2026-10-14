@@ -13,6 +13,7 @@
     1. 指代：已有作品的角色用角色名；其他人物（包括原创人物）用最显著的外观特征或位置，如 "the silver-haired girl on the left"、"the tall black-haired boy"。同一人物在全文中用同一个指代。
     2. 核心外貌：发型发色、瞳色、服装、配饰等能把这个人和其他人区分开的特征。
     3. 正在做什么：动作、姿势、朝向、视线、表情。
+    只有部分人物才有的显著身体特征（兽耳、尾巴、角、翅膀、光环、精灵耳、异色皮肤、扶她等），模型容易给所有人都加上：除了在有这个特征的人物句里写出来，还要在**没有**的人物句里明确写出没有，如 "the black-haired girl has normal human ears and no tail"、"the blonde girl has no horns or wings"。不要把这些特征写进 neg（会连有这个特征的人物一起去掉）。
     人物之间有互动时写清谁对谁做什么（如 "the blonde girl hugs the silver-haired girl from behind"）。人物句写完后，最多再用一句写场景与光线。
     例如："The silver-haired girl on the left wears a sailor uniform with a red neckerchief and black thighhighs, and waves at the viewer with a bright smile. The black-haired girl on the right wears a white maid dress with a frilled headdress, holding a tray with both hands and looking at the silver-haired girl. They stand in a sunlit café."
   - 单个人物：一到两句，写人物正在做什么以及与周围物品、环境的关系，再用一句写场景与光线；外貌只写标签难以表达的部分。
