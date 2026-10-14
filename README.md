@@ -19,7 +19,7 @@ start.bat ──► 前端服务 frontend   127.0.0.1:8200（网页 + 进程管�
 | 项目 | 要求 |
 |---|---|
 | 系统 | Windows 10 / 11 |
-| 显卡 | NVIDIA，6GB 显存可用（实测 RTX 3060 Laptop 6GB：832×1216 约 50 秒/张） |
+| 显卡 | NVIDIA：6GB 显存可用（实测 RTX 3060 Laptop 6GB：832×1216 约 50 秒/张）<br>AMD：RX 7000 / 9000 系列（**未实测**，建议 8GB 以上显存），见下文 [AMD 显卡](#amd-显卡) |
 | Python | 3.10 及以上（用来建 `.venv`；实测 3.11） |
 | 磁盘 | 最少约 6GB（一个基础模型 + 文本编码器 + VAE），全部模型约 26GB |
 
@@ -46,8 +46,17 @@ git clone https://github.com/ZGMFX25A/Anima-Studio.git Anima-Studio
 
 ### 2. ComfyUI 便携版
 
-从 [ComfyUI Releases](https://github.com/Comfy-Org/ComfyUI/releases) 下载 Windows NVIDIA 便携版（`ComfyUI_windows_portable_nvidia.7z`），
-解压后把 `ComfyUI_windows_portable` 文件夹整个放到程序根目录。需要支持 Anima 的版本（实测 0.33.2）。
+从 [ComfyUI Releases](https://github.com/Comfy-Org/ComfyUI/releases) 按显卡下载 Windows 便携版：
+
+| 显卡 | 下载 |
+|---|---|
+| NVIDIA | `ComfyUI_windows_portable_nvidia.7z` |
+| AMD | `ComfyUI_windows_portable_amd.7z` |
+
+两种包解压后都是 `ComfyUI_windows_portable` 文件夹，整个放到程序根目录即可。需要支持 Anima 的版本（实测 NVIDIA 版 0.33.2）。
+
+启动时程序会自动识别本机显卡和装的是哪一版 ComfyUI。装错了（例如 AMD 显卡装了 NVIDIA 版）不会启动 ComfyUI，并在控制台和 菜单 → 引擎 中说明该换哪个包。
+笔记本同时有核显和 NVIDIA 独显时，按 NVIDIA 处理。
 
 ### 3. 下载模型
 
@@ -101,6 +110,30 @@ py -3 -m venv .venv
 - Hugging Face：网页把 `huggingface.co` 换成 `hf-mirror.com` 下载；用 `huggingface-cli` / `hf_hub_download` 时先设置环境变量 `HF_ENDPOINT=https://hf-mirror.com`。
   如果走代理下载很慢，可以再设置 `HF_HUB_DISABLE_XET=1`。
 
+## AMD 显卡
+
+> 本程序只在 NVIDIA 显卡上实测过。以下按 ComfyUI 对 AMD 显卡的支持情况整理，**未实测**。
+
+| 显卡 | 情况 |
+|---|---|
+| RX 9070 / 9060 系列、RX 7900 / 7800 / 7700 系列、Ryzen AI Max / 300 系列 | ComfyUI 官方 AMD 便携版直接支持 |
+| RX 7600 | 能运行，但 ComfyUI 不会自动启用 PyTorch 注意力，速度较慢 |
+| RX 6000 系列及更老 | 不保证能用：ComfyUI 认为这些显卡不支持 bf16，会改用 fp16 计算 |
+
+- 显卡驱动更新到最新版（AMD Software: Adrenalin Edition）。
+- 安装步骤与 NVIDIA 相同，只是第 2 步下载 AMD 版；第 4 步的节点和依赖照装（动作检测在 CPU 上运行，与显卡无关）。
+- 显存建议 8GB 以上。NVIDIA 版 ComfyUI 默认开启「动态显存」，AMD 版目前默认不开，显存利用不如 NVIDIA 版。
+  出现显存不足时，在 菜单 → 引擎 的「ComfyUI 启动参数」里填 `--enable-dynamic-vram`，保存后重启 ComfyUI。
+
+### 换显卡或装错了版本
+
+模型、节点和动作检测依赖都装在 `ComfyUI_windows_portable` 里，换成另一版时：
+
+1. 把 `ComfyUI_windows_portable\ComfyUI\models\` 里下载的模型移到别处；
+2. 删除（或改名）旧的 `ComfyUI_windows_portable`，解压新下载的包放到程序根目录；
+3. 把模型放回 `ComfyUI_windows_portable\ComfyUI\models\` 的对应子目录；
+4. 重新执行安装第 4 步（节点与依赖）。
+
 ## 启动
 
 双击 **`start.bat`**：依次启动 ComfyUI、绘画模块和前端，全部就绪后自动打开 <http://127.0.0.1:8200>。
@@ -128,7 +161,7 @@ WSL / Hyper-V / Docker 有时会临时占用 8188、8190、8200 端口，导致�
 | **LLM** | 「AI 填写」和「人设」需要一个 LLM 服务：添加服务商（OpenAI 兼容格式或 Anthropic 格式）、填 Base URL 与 API Key、拉取模型，再点「测试」检查连通性和识图能力。测出能识图的模型会出现在 AI 填写卡片的「识图模型」下拉里，可以和生成用的模型分开选（例如用能看图的模型识图、用不能看图的模型生成）。不配置也能手动填写提示词出图。 |
 | **联网** | Danbooru 角色 / 画师检索的联网方式（直连 / 系统代理 / 自定义代理）。「标签参考」需要 [DanbooruSearch](https://sakizuki-danboorusearch.hf.space) 的 Key（可选）。 |
 | **存储** | 图片保存目录，默认为根目录下的 `output\`（按日期分子目录）。改成其它目录后，单独用 `start_painter.bat` 启动绘画模块时也会用这个目录。 |
-| **引擎** | 查看与启动 / 停止 / 重启 ComfyUI 和绘画模块。 |
+| **引擎** | 查看与启动 / 停止 / 重启 ComfyUI 和绘画模块；显示识别到的显卡与 ComfyUI 版本；「ComfyUI 启动参数」可追加命令行参数（一般留空）。 |
 
 ## 数据与隐私
 

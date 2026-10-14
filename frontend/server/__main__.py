@@ -61,6 +61,11 @@ def main() -> None:
         time.sleep(0.1)
     log.info("前端页面：%s", URL)
 
+    from . import engine  # noqa: E402
+    gs = engine.gpu_status()
+    log.info(engine.describe(gs))
+    if gs["level"] == "warn":
+        log.warning("注意：%s", gs["message"])
     procs.start_all()
     if not os.environ.get("ANIMA_NO_BROWSER"):
         webbrowser.open(URL)

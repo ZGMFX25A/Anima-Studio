@@ -122,10 +122,14 @@ class Service:
     """一个受管理的子进程服务。状态：stopped / starting / running / unresponsive / stopping。"""
 
     def __init__(self, name: str, label: str, cmd: list[str], cwd: Path, port: int, health_url: str,
-                 log_path: Path, start_timeout: float, env_fn=None):
+                 log_path: Path, start_timeout: float, env_fn=None, args_fn=None, check_fn=None):
         self.name, self.label = name, label
         self.env_fn = env_fn           # 启动时追加的环境变量（如绘画模块的输出目录）
         self.applied_env: dict | None = None   # 本次进程启动时实际使用的追加变量；接管的外部进程为 None
+        self.args_fn = args_fn         # 启动时追加的命令行参数（ComfyUI 的额外启动参数）
+        self.applied_args: list | None = None  # 本次进程启动时实际追加的参数；接管的外部进程为 None
+        self.check_fn = check_fn       # 启动前检查（ComfyUI：显卡与便携版是否对应），返回不能启动的原因
+        self.blocked = False           # 上次启动被启动前检查拦下
         self.cmd, self.cwd, self.port = cmd, cwd, port
         self.health_url, self.log_path = health_url, log_path
         self.start_timeout = start_timeout
@@ -177,20 +181,21 @@ class Service:
     def info(self) -> dict:
         state = self.refresh()
         return {"name": self.name, "label": self.label, "state": state, "pid": self.pid,
-                "external": self.external, "port": self.port, "error": self.error,
+                "external": self.external, "port": self.port, "error": self.error, "blocked": self.blocked,
                 "uptime": (time.time() - self.started_at) if (self.started_at and state == "running") else None}
 
     # ── 控制 ──
     def _adopt(self, pid: int) -> None:
         self.pid, self._popen, self.external = pid, None, True
-        self.applied_env = None
+        self.applied_env = self.applied_args = None
+        self.blocked = False
         self.started_at = self.started_at or time.time()
         if ADOPT_INTO_JOB and JOB.assign(pid):
             log.info("%s：接管已在运行的进程 PID %s（已纳入随窗口关闭）", self.label, pid)
         else:
             log.info("%s：接管已在运行的进程 PID %s", self.label, pid)
 
-    def start(self, attempt: int = 1) -> None:
+    def start(self, attempt: int = 1, skip_check: bool = False) -> None:
         with self._lock:
             if self.state in ("starting", "running"):
                 return
@@ -201,9 +206,15 @@ class Service:
                     self.state, self.error = "running", None
                     return
                 _kill_tree(pid)   # 端口被无响应的旧进程占用
+            reason = None if skip_check or not self.check_fn else self.check_fn()
+            if reason:
+                self._op += 1
+                self.state, self.error, self.blocked = "stopped", reason, True
+                log.error("%s：%s", self.label, reason)
+                return
             self._op += 1
             op = self._op
-            self.error, self.external = None, False
+            self.error, self.external, self.blocked = None, False, False
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             logf = open(self.log_path, "ab")
             logf.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} 启动 {self.label} =====\n".encode("utf-8"))
@@ -211,12 +222,23 @@ class Service:
             extra = self.env_fn() if self.env_fn else {}
             env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", **extra)
             self.applied_env = extra
+            args = self.args_fn() if self.args_fn else []
+            self.applied_args = args
+            if args:
+                logf.write(f"额外启动参数：{' '.join(args)}\n".encode("utf-8"))
+                logf.flush()
             flags = 0
             if os.name == "nt":
                 flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-            self._popen = subprocess.Popen(self.cmd, cwd=str(self.cwd), stdout=logf, stderr=subprocess.STDOUT,
-                                           stdin=subprocess.DEVNULL, env=env, creationflags=flags)
-            logf.close()
+            try:
+                self._popen = subprocess.Popen(self.cmd + args, cwd=str(self.cwd), stdout=logf, stderr=subprocess.STDOUT,
+                                               stdin=subprocess.DEVNULL, env=env, creationflags=flags)
+            except OSError as e:
+                self._popen, self.state, self.error = None, "stopped", f"无法启动：{e}"
+                log.error("%s：%s", self.label, self.error)
+                return
+            finally:
+                logf.close()
             self.pid = self._popen.pid
             JOB.assign(self.pid)
             self.started_at = time.time()
@@ -277,12 +299,12 @@ class Service:
         _kill_tree(pid)
         with self._lock:
             self.pid, self._popen, self.external, self.started_at = None, None, False, None
-            self.state, self.error = "stopped", None
+            self.state, self.error, self.blocked = "stopped", None, False
         log.info("%s：已停止", self.label)
 
-    def restart(self) -> None:
+    def restart(self, skip_check: bool = False) -> None:
         self.stop()
-        self.start()
+        self.start(skip_check=skip_check)
 
     def wait_ready(self, timeout: float) -> bool:
         deadline = time.time() + timeout
@@ -295,12 +317,23 @@ class Service:
         return False
 
 
+def _comfy_args() -> list[str]:
+    from . import engine
+    return engine.current_args()
+
+
+def _comfy_check() -> str | None:
+    from . import engine
+    return engine.check_start()
+
+
 COMFY = Service(
     "comfyui", "ComfyUI 引擎",
+    # NVIDIA 版与 AMD 版便携版的启动命令相同（与官方 run_nvidia_gpu.bat / run_amd_gpu.bat 一致，不加显卡相关参数）
     [str(config.COMFY_PYTHON), "-s", "ComfyUI\\main.py", "--listen", "127.0.0.1", "--port", str(config.COMFY_PORT),
      "--disable-auto-launch"],
     config.COMFY_DIR, config.COMFY_PORT, f"{config.COMFY_URL}/system_stats",
-    config.LOGS_DIR / "comfyui.log", start_timeout=300)
+    config.LOGS_DIR / "comfyui.log", start_timeout=300, args_fn=_comfy_args, check_fn=_comfy_check)
 
 def _painter_env() -> dict:
     from . import storage   # 延迟导入，避免循环依赖

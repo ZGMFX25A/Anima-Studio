@@ -57,9 +57,11 @@ function renderPanel() {
 }
 
 // ═══════════════════════════ 引擎 ═══════════════════════════
-const busy = { comfyui: null, painter: null };
+const busy = { comfyui: null, painter: null, args: false };
+const VENDOR = { nvidia: 'NVIDIA', amd: 'AMD', intel: 'Intel', cpu: 'CPU' };
 
 let engineKey = '';
+let argsDraft = null;   // 启动参数输入框里尚未保存的内容，重绘时保留
 
 // 结构（状态、按钮、错误）变化时才重建；其余只更新数值，避免每 5 秒重绘吃掉点击。
 function renderEngine() {
@@ -70,11 +72,13 @@ function renderEngine() {
     return;
   }
   const c = status.comfyui, p = status.painter;
-  const key = JSON.stringify([c.state, c.pid, c.external, c.error, c.log_tail, !!c.stats, !!c.stats?.devices?.length,
-    p.state, p.pid, p.external, p.error, p.log_tail, busy.comfyui, busy.painter]);
+  const key = JSON.stringify([c.state, c.pid, c.external, c.error, c.blocked, c.log_tail, !!c.stats, !!c.stats?.devices?.length,
+    c.gpu?.level, c.gpu?.reason, c.gpu?.message, c.args?.comfy_args, c.args?.pending_restart,
+    p.state, p.pid, p.external, p.error, p.log_tail, busy.comfyui, busy.painter, busy.args]);
   if (key !== engineKey) {
     engineKey = key;
-    fill(root, engineHead(), comfyCard(c), painterCard(p));
+    if (argsDraft === null && c.args) argsDraft = c.args.comfy_args;
+    fill(root, engineHead(), comfyCard(c), argsCard(c), painterCard(p));
   }
   for (const [k, v] of Object.entries(engineValues())) {
     const node = root.querySelector(`[data-k="${k}"]`);
@@ -96,11 +100,14 @@ function engineValues() {
   const dev = st?.devices?.[0];
   const used = dev ? dev.vram_total - dev.vram_free : null;
   const ram = st ? st.ram_total - st.ram_free : null;
+  const g = c.gpu, cf = g?.comfy;
   return {
     'c-pid': c.pid ? `PID ${c.pid}${c.external ? '（启动前已在运行，已接管）' : ''}` : '—',
     'c-up': fmtDuration(c.uptime),
     'c-ver': st?.version ? `ComfyUI ${st.version}` : '—',
-    'c-torch': st?.pytorch || '—',
+    'c-torch': st?.pytorch || cf?.torch || '—',
+    'c-card': !g ? '—' : g.gpu_names || (g.gpus.length ? g.gpus.map(x => x.name).join('、') : '未检测到'),
+    'c-flavor': !cf ? '—' : !cf.installed ? '未安装' : cf.flavor ? `${VENDOR[cf.flavor]} 版` : '未知',
     'c-gpu': dev ? `显存 · ${dev.name.replace(/^cuda:\d+\s*/, '')}` : '显存',
     'c-vram': dev ? `${fmtBytes(used)} / ${fmtBytes(dev.vram_total)}` : '—',
     'c-vram-m': dev ? `${(used / dev.vram_total * 100).toFixed(1)}%` : '0%',
@@ -134,6 +141,12 @@ function comfyCard(c) {
     onclick: () => control('comfyui', action),
   }, label);
   const running = c.state === 'running';
+  const g = c.gpu;
+  // 显卡与 ComfyUI 版本明确对不上时启动会被拦下；识别可能有误，留一个「仍然启动」
+  const force = c.blocked && g?.reason === 'mismatch' ? el('button', {
+    class: `btn small ghost${b === 'force' ? ' busy' : ''}`, disabled: !!b, style: { marginLeft: '8px' },
+    onclick: () => control('comfyui', 'start', false, true),
+  }, '仍然启动') : null;
   return el('div', { class: 'svc' },
     el('div', { class: 'svc-head' }, el('h3', {}, 'ComfyUI 引擎'), badge(c.state),
       el('div', { class: 'svc-btns' },
@@ -143,9 +156,45 @@ function comfyCard(c) {
         el('button', { class: `btn small ghost${b === 'free' ? ' busy' : ''}`, disabled: !running || !!b, onclick: freeVram }, '释放显存'))),
     el('div', { class: 'kv' },
       item('进程', 'c-pid'), item('运行时长', 'c-up'), item('版本', 'c-ver'), item('PyTorch', 'c-torch'),
+      item('显卡', 'c-card'), item('ComfyUI 类型', 'c-flavor'),
       meterItem('c-gpu', '显存', 'c-vram'), meterItem('c-ram-label', '内存', 'c-ram')),
-    c.error ? el('div', { class: 'hint warn' }, c.error) : null,
+    c.error ? el('div', { class: 'hint warn' }, c.error, force) : null,
+    g?.message && g.message !== c.error ? el('div', { class: 'hint warn' }, g.message) : null,
     c.log_tail ? el('pre', { class: 'log' }, c.log_tail) : null);
+}
+
+function argsCard(c) {
+  const a = c.args;
+  if (!a) return null;
+  const input = el('input', { type: 'text', value: argsDraft ?? '', placeholder: '留空 = 不加参数，例如 --enable-dynamic-vram' });
+  const dirty = el('span', { class: 'small', style: { color: 'var(--warn)' } });
+  const mark = () => { dirty.textContent = (argsDraft ?? '').trim() !== a.comfy_args ? '有未保存的修改' : ''; };
+  input.addEventListener('input', () => { argsDraft = input.value; mark(); });
+  mark();
+  const save = async () => {
+    busy.args = true;
+    renderEngine();
+    try {
+      const r = await api.put('/api/engine/settings', { comfy_args: argsDraft ?? '' });
+      argsDraft = r.comfy_args;
+      toast(r.pending_restart ? '已保存，重启 ComfyUI 后生效' : '已保存', 'ok', 5000);
+    } catch (e) { toastError(e); }
+    finally { busy.args = false; emit('refresh-status'); }
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+  return el('div', { class: 'svc' },
+    el('div', { class: 'svc-head' }, el('h3', {}, 'ComfyUI 启动参数'), dirty,
+      el('div', { class: 'svc-btns' },
+        el('button', { class: `btn small accent${busy.args ? ' busy' : ''}`, disabled: busy.args, onclick: save }, '保存'))),
+    el('div', { class: 'seed-row' }, input),
+    el('div', { class: 'hint' },
+      '追加在 ComfyUI 命令行后面，重启 ComfyUI 后生效（单独运行 start_comfyui.bat 时不使用）。一般留空即可。常用：',
+      el('br'), '· --enable-dynamic-vram：AMD 显卡出现显存不足时可以试试（NVIDIA 版已默认开启）',
+      el('br'), '· --reserve-vram 1：给系统和其它程序多留 1GB 显存',
+      el('br'), '--listen 与 --port 由本程序固定设置，不能填写。'),
+    a.pending_restart ? el('div', { class: 'hint warn' },
+      a.external ? 'ComfyUI 不是由本程序启动的，无法确认它使用的参数；重启后按上面的设置启动。'
+        : 'ComfyUI 仍在使用旧的启动参数，重启后生效。') : null);
 }
 
 function painterCard(p) {
@@ -166,18 +215,20 @@ function painterCard(p) {
     p.log_tail ? el('pre', { class: 'log' }, p.log_tail) : null);
 }
 
-async function control(svc, action, force = false) {
-  busy[svc] = action;
+async function control(svc, action, force = false, ignoreGpu = false) {
+  busy[svc] = ignoreGpu ? 'force' : action;
   renderEngine();
   try {
-    await api.post(`/api/system/${svc}/${action}${force ? '?force=1' : ''}`);
+    const q = [force ? 'force=1' : '', ignoreGpu ? 'ignore_gpu=1' : ''].filter(Boolean).join('&');
+    const r = await api.post(`/api/system/${svc}/${action}${q ? `?${q}` : ''}`);
     const name = svc === 'painter' ? '绘画模块' : 'ComfyUI';
-    toast({ start: `正在启动${name}…`, stop: `${name}已停止`, restart: `正在重启${name}…` }[action], 'ok');
+    if (r.blocked) toast(`${name}没有启动，原因见引擎页`, 'warn', 6000);
+    else toast({ start: `正在启动${name}…`, stop: `${name}已停止`, restart: `正在重启${name}…` }[action], 'ok');
   } catch (e) {
     if (e.code === 'BUSY' && !force) {
       busy[svc] = null;
       const ok = await confirmDialog('有任务正在生成', `${action === 'stop' ? '停止' : '重启'}会取消正在生成和排队的任务，是否继续？`, '继续', true);
-      if (ok) return control(svc, action, true);
+      if (ok) return control(svc, action, true, ignoreGpu);
     } else toastError(e);
   } finally {
     busy[svc] = null;

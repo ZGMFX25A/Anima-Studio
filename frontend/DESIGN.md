@@ -190,6 +190,7 @@ F:\AI-Image-Generation\
 - 页面打开时每 5 秒自动刷新。
 - 有任务进行时停止/重启 → 确认框，确认后先取消任务。
 - 启动/重启中按钮显示加载，健康检查通过后恢复；失败时显示日志末尾若干行。
+- 显卡识别、显卡与 ComfyUI 版本不对应时的处理、「ComfyUI 启动参数」卡片见 §15。
 
 ### 5.2 LLM 配置
 
@@ -635,3 +636,54 @@ AI 填写卡片里的两个开关（「联网检索（角色 / 画师）」「�
 | POST | `/api/image-meta/migrate` | `{force}` → `{total, updated, skipped, missing, unsupported, failed}` |
 
 代码：`server/imagemeta.py`、`server/llm/imgsplit.py`、`web/js/imgread.js`。
+
+---
+
+## 15. 显卡识别与 ComfyUI 启动参数（2026-10-14 新增）
+
+支持 AMD 显卡：同一套程序，启动 ComfyUI 前自动识别本机显卡和装的 ComfyUI 便携版是哪一版。AMD 部分未实测（作者只有 NVIDIA 显卡）。
+
+### 15.0 已确认的决定
+
+| # | 问题 | 决定 |
+|---|---|---|
+| 1 | 是否单独出 AMD 版 | 不单独出：代码与 `start.bat` 只有一份，只有 ComfyUI 便携版按显卡下载不同的包（`ComfyUI_windows_portable_nvidia.7z` / `_amd.7z`，解压后目录名相同） |
+| 2 | AMD 默认启动参数 | 不加，与官方 AMD 便携版的 `run_amd_gpu.bat` 一致 |
+| 3 | 额外启动参数 | 菜单 → 引擎 加「ComfyUI 启动参数」输入框，NVIDIA 也可用 |
+| 4 | 不做 | 自动下载 ComfyUI、ZLUDA / DirectML、Intel 显卡；单独运行的 `painter\start_comfyui.bat` 不做识别、不读启动参数 |
+
+### 15.1 识别
+
+- **本机显卡**：PowerShell `Get-CimInstance Win32_VideoController` 的 PCI 厂商号（`10DE` NVIDIA、`1002` AMD、`8086` Intel），进程内只查一次。
+  有 NVIDIA 就按 NVIDIA（笔记本常见核显 + NVIDIA 独显），其次 AMD。查询失败时不判断。
+- **ComfyUI 版本**：读便携版 `python_embeded\Lib\site-packages\torch\version.py` 的 `cuda` / `hip`（`rocm`）/ `xpu` 字段，不启动 Python。读不到时不判断。
+- 引擎页 ComfyUI 卡片显示「显卡」（ComfyUI 实际会用的那块）与「ComfyUI 类型」（NVIDIA 版 / AMD 版 / 未安装）；控制台启动时打印一行同样的信息。
+
+### 15.2 启动前检查
+
+| 情况 | 处理 |
+|---|---|
+| 没有 `ComfyUI_windows_portable\python_embeded\python.exe` | 不启动，按识别到的显卡说明该下载哪个包 |
+| 显卡与版本明确对不上：装的是 NVIDIA 版，本机有 AMD 显卡、没有 NVIDIA 显卡（或反过来） | 不启动，说明该换哪个包、换之前把模型移出来、换好后重装节点与依赖。引擎页提供「仍然启动」（跳过检查，防止识别有误时无法使用） |
+| AMD 版 + 本机同时有 NVIDIA 显卡（AMD 核显 + NVIDIA 独显） | 照常启动，提示建议换成 NVIDIA 版 |
+| 装的版本对应的显卡没检测到，也没有另一家的显卡（如只有 Intel 核显） | 照常启动，提示可能无法启动 |
+| CPU 版 / Intel 版 | 照常启动，提示出图很慢 / 未在 Intel 显卡上测试 |
+
+- 被拦下时状态为「已停止」，`blocked: true`，`error` 为原因；顶栏显示「引擎未启动 · 原因见 菜单 → 引擎」。端口上已有在运行的 ComfyUI 时照常接管，不做检查。
+- 生成时显存不足（`OUT_OF_MEMORY`）且装的是 AMD 版、启动参数里还没有 `--enable-dynamic-vram`：错误提示后面追加「可在启动参数里加 --enable-dynamic-vram」。
+
+### 15.3 启动参数
+
+- 保存在 `data/settings.json` 的 `engine.comfy_args`，启动 ComfyUI 时追加在命令行最后（同时写进 `logs/comfyui.log`），重启 ComfyUI 后生效。
+- 按 Windows 命令行规则拆分，引号可包住含空格的路径；`--listen`、`--port` 由本程序固定，不能填。
+- ComfyUI 运行中且正在用的参数与设置不一致（外部启动的进程：设置了参数就算）时提示「重启后生效」。
+
+### 15.4 接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/system/status` | `comfyui` 新增 `blocked`、`gpu: {gpus, vendor, gpu_vendor, gpu_names, comfy: {installed, flavor, torch}, level: ok\|warn\|block, reason: missing\|mismatch, message, oom_hint}`、`args: {comfy_args, pending_restart, external}` |
+| POST | `/api/system/comfyui/{start\|restart}?ignore_gpu=1` | 跳过启动前检查（引擎页「仍然启动」） |
+| GET / PUT | `/api/engine/settings` | `{comfy_args}`；PUT 参数不合法时 422 |
+
+代码：`server/engine.py`、`server/procs.py`（`Service` 的 `args_fn`、`check_fn`）、`web/js/menu.js`（引擎页）。

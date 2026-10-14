@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
-from . import config, gallery, imagemeta, personacard, personas, procs, storage
+from . import config, engine, gallery, imagemeta, personacard, personas, procs, storage
 from .generation import TRACKER, FormError, load_json
 from .llm import client as llm_client
 from .llm import fill as llm_fill
@@ -178,8 +178,10 @@ def _painter_health() -> dict | None:
 def system_status():
     comfy = procs.COMFY.info()
     comfy["stats"] = procs.comfy_stats() if comfy["state"] == "running" else None
-    if comfy["state"] in ("stopped", "unresponsive") and comfy["error"]:
+    if comfy["state"] in ("stopped", "unresponsive") and comfy["error"] and not comfy["blocked"]:
         comfy["log_tail"] = procs.COMFY.log_tail()
+    comfy["gpu"] = engine.gpu_status()
+    comfy["args"] = _engine_args_state(comfy["state"])
     painter = procs.PAINTER.info()
     h = _painter_health() if painter["state"] == "running" else None
     painter["queue"] = h.get("queue") if h else None
@@ -200,7 +202,8 @@ def _cancel_all_jobs() -> None:
 
 
 @app.post("/api/system/{service}/{action}")
-def system_control(service: str, action: str, force: int = 0):
+def system_control(service: str, action: str, force: int = 0, ignore_gpu: int = 0):
+    """ignore_gpu=1：跳过启动前的显卡检查（引擎页「仍然启动」）。"""
     svc = procs.SERVICES.get(service)
     if not svc or action not in ("start", "stop", "restart"):
         return err(404, "NOT_FOUND", "未知操作")
@@ -211,8 +214,34 @@ def system_control(service: str, action: str, force: int = 0):
             return err(409, "BUSY", "有任务正在生成或排队")
         if busy:
             _cancel_all_jobs()
-    getattr(svc, action)()
+    if action == "stop":
+        svc.stop()
+    else:
+        getattr(svc, action)(skip_check=bool(ignore_gpu))
     return svc.info()
+
+
+def _engine_args_state(state: str | None = None) -> dict:
+    c = procs.COMFY
+    saved = engine.get_args()
+    running = (state or c.refresh()) == "running"
+    # ComfyUI 正在用的参数与设置不一致（外部启动的进程无法确认：设置了参数就算）
+    pending = running and (bool(saved) if c.external else c.applied_args != engine.current_args())
+    return {"comfy_args": saved, "pending_restart": pending, "external": c.external}
+
+
+@app.get("/api/engine/settings")
+def engine_settings_get():
+    return _engine_args_state()
+
+
+@app.put("/api/engine/settings")
+def engine_settings_put(comfy_args: str = Body("", embed=True)):
+    try:
+        engine.set_args(comfy_args)
+    except ValueError as e:
+        return err(422, "INVALID", f"启动参数无效：{e}")
+    return _engine_args_state()
 
 
 @app.post("/api/engine/free-vram")
