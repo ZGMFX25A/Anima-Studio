@@ -13,10 +13,11 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
-from . import config, gallery, personacard, personas, procs, storage
+from . import config, gallery, imagemeta, personacard, personas, procs, storage
 from .generation import TRACKER, FormError, load_json
 from .llm import client as llm_client
 from .llm import fill as llm_fill
+from .llm import imgsplit as llm_imgsplit
 from .llm import persona as llm_persona
 from .llm import retry as llm_retry
 from .llm import store as llm_store
@@ -295,6 +296,34 @@ def llm_cancel(request_id: str = Body(..., embed=True)):
     """页面上点了「取消」：AI 填写 / 人设 AI 拆分与整理在下一次重试前停下。"""
     llm_retry.cancel(request_id)
     return {"ok": True}
+
+
+# ───────────────────────────── 读图（图片里的生成参数） ─────────────────────────────
+
+@app.post("/api/image-meta/read")
+def image_meta_read(data: str = Body(..., embed=True)):
+    try:
+        return imagemeta.read(gallery.decode_data_url(data))
+    except ValueError as e:
+        return err(422, "NO_METADATA", str(e))
+
+
+@app.post("/api/image-meta/split")
+def image_meta_split(data: dict = Body(...)):
+    """其它来源的提示词拆到各字段：mode=ai 用 LLM（prompts/import/），mode=rule 按规则粗分。"""
+    if data.get("mode") == "ai":
+        try:
+            return llm_imgsplit.split(data)
+        except llm_client.LLMError as e:
+            return err(502, "LLM_ERROR", str(e))
+    return {"fields": imagemeta.rule_split(str(data.get("positive") or ""), str(data.get("negative") or "")),
+            "warnings": [], "elapsed": 0}
+
+
+@app.post("/api/image-meta/migrate")
+def image_meta_migrate(force: bool = Body(False, embed=True)):
+    """给图库里的图片补写 v2 anima_painter 与 A1111 parameters（force：已是新格式的也重写）。"""
+    return imagemeta.migrate(force)
 
 
 # ───────────────────────────── 存储 ─────────────────────────────

@@ -189,6 +189,17 @@ def get(item_id: int) -> dict | None:
     return _row(r, full=True) if r else None
 
 
+def find_by_job(job_id: str) -> int | None:
+    with _lock, _conn() as c:
+        r = c.execute("SELECT id FROM images WHERE job_id = ? ORDER BY id DESC LIMIT 1", (job_id,)).fetchone()
+    return r[0] if r else None
+
+
+def all_ids() -> list[int]:
+    with _lock, _conn() as c:
+        return [r[0] for r in c.execute("SELECT id FROM images ORDER BY id")]
+
+
 def image_path(item_id: int) -> Path | None:
     with _lock, _conn() as c:
         r = c.execute("SELECT path FROM images WHERE id = ?", (item_id,)).fetchone()

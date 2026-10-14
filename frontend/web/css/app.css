@@ -453,3 +453,19 @@ a:hover { text-decoration: underline; }
 .crow.four { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.4fr) 90px 150px; }
 
 .strip-item img { width: 100%; height: 100%; object-fit: cover; border-radius: 7px; display: block; }
+
+/* 从图片读取 */
+.import-drop { flex: none; display: flex; align-items: center; gap: 10px; padding: 9px 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius); color: var(--muted); cursor: pointer; outline: none; font-size: 13px; }
+.import-drop b { font-size: 16px; font-weight: 400; }
+.import-drop span { color: var(--text); font-weight: 600; white-space: nowrap; }
+.import-drop small { font-size: 12px; margin-left: auto; text-align: right; }
+.import-drop:hover, .import-drop:focus-visible, .import-drop.drag { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.import-drop.loading { opacity: .6; pointer-events: none; }
+.import-drop.loading b { animation: spin 1s linear infinite; }
+.import-src { color: var(--text); margin-bottom: 8px; }
+.import-text { max-height: 160px; overflow: auto; }
+.import-opt { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0 2px; color: var(--text); font-size: 13px; }
+.import-opt.check { cursor: pointer; user-select: none; }
+.import-opt small { flex-basis: 100%; }
+.import-opt.check small { flex-basis: auto; }
+.modal-body .hint { margin-top: 8px; }

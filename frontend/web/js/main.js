@@ -6,6 +6,7 @@ import { initDraw } from './draw.js';
 import { initGallery } from './gallery.js';
 import { initMenu } from './menu.js';
 import { initLlm } from './llm.js';
+import { initImgRead } from './imgread.js';
 import { initPersona } from './persona.js';
 
 async function bootstrap() {
@@ -70,6 +71,7 @@ async function main() {
   loadForm();
   initDraw();
   initLlm();
+  initImgRead();
   initGallery();
   initMenu();
   initPersona();

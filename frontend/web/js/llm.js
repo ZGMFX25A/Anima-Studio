@@ -54,6 +54,12 @@ function current() {
   return models.find(m => m.key === app.form.llm.model_key) || null;
 }
 
+// 读图的 AI 拆分也用 AI 填写卡片里选的模型和思考档
+export function currentLlm() {
+  const m = current();
+  return m ? { provider_id: m.provider_id, model_id: m.model_id, label: m.label, level: app.form.llm.level } : null;
+}
+
 // 识图模型：'' = 同上（用 AI 填写的模型）；下拉框只列出能看图的模型
 function visionModel() {
   const k = app.form.llm.vision_key;

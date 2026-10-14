@@ -111,9 +111,9 @@
     "quality": 95,
     "return_base64": false,              // true 时结果直接附带 base64
     "include_intermediates": false,      // true 时附带骨架图、各阶段前的图
-    "embed_metadata": true               // PNG 写入 anima_painter 文本块（参数 JSON）
+    "embed_metadata": true               // PNG 写入 anima_painter 文本块（参数 JSON，含 client_meta.form）+ A1111 格式的 parameters
   },
-  "client_meta": {}                      // 前端透传，原样返回
+  "client_meta": {}                      // 前端透传，原样返回；其中 form（字段原值等）会写进 anima_painter
 }
 ```
 

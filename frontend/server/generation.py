@@ -8,7 +8,7 @@ import time
 
 import httpx
 
-from . import config, gallery
+from . import config, gallery, imagemeta
 
 log = logging.getLogger("frontend.generation")
 
@@ -76,7 +76,9 @@ def build_request(form: dict) -> tuple[dict, list[str]]:
             "scheduler": form.get("scheduler") or None,
         },
         "output": {"format": "png", "embed_metadata": True},
-        "client_meta": {"source": "anima-frontend"},
+        # form 由绘画模块写进图片的 anima_painter 文本块，读图时还原到各字段（见 imagemeta.py）
+        "client_meta": {"source": "anima-frontend",
+                        "form": imagemeta.form_subset({**form, "width": w, "height": h})},
     }
     cr = form.get("character_ref") or {}
     if cr.get("enabled"):

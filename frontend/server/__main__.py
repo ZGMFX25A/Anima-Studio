@@ -45,6 +45,14 @@ def main() -> None:
     n = personas.migrate_legacy_covers()          # 旧版 webp 封面副本 → 原图无损 PNG（只处理一次）
     if n:
         log.info("已用原图重建 %d 个人设的无损封面", n)
+    from . import imagemeta  # noqa: E402
+
+    def _migrate_meta():                          # 旧图补写新格式的生成参数（只自动跑一次，后台进行）
+        s = imagemeta.migrate_once()
+        if s and (s["updated"] or s["failed"]):
+            log.info("已给 %d 张旧图写入新格式的生成参数%s", s["updated"],
+                     f"，{s['failed']} 张失败（下次启动重试，或在 菜单 → 存储 手动执行）" if s["failed"] else "")
+    threading.Thread(target=_migrate_meta, daemon=True).start()
 
     server = uvicorn.Server(uvicorn.Config(app, host=config.HOST, port=config.PORT, log_level="warning"))
     t = threading.Thread(target=server.run, daemon=True)
