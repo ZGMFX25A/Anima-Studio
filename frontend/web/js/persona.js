@@ -4,6 +4,7 @@ import { $, el, fill, toast, toastError, confirmDialog, modal, fmtTime } from '.
 import { app, on, emit, saveForm, syncAll } from './store.js';
 import { createSide } from './personaside.js';
 import { aiSection, openDanbooru, resetAi } from './personaai.js';
+import { exportCard, exportList, importCards, cardDropTarget } from './personacard.js';
 
 export const KIND = { original: '原创', existing: '已有角色' };
 const EDIT_KEYS = ['name', 'aliases', 'kind', 'character_tag', 'series', 'count', 'artist', 'groups', 'base_tags',
@@ -40,6 +41,7 @@ export function initPersona() {
     else side.update();
   });
   $('#persona-pick').addEventListener('click', openPicker);
+  cardDropTarget($('#persona-list'), importFiles);
   on('persona-open', async (id) => {      // AI 填写参考资料里的「打开人设」
     if (st.view === 'detail' && st.edit?.id === id) return;
     if (st.view === 'detail' && isDirty()
@@ -73,10 +75,17 @@ function drawList() {
   const seg = el('span', { class: 'seg', id: 'pl-kind' },
     [['', '全部'], ['original', '原创'], ['existing', '已有角色']].map(([v, t]) =>
       el('button', { 'data-v': v, class: st.kind === v ? 'on' : '', onclick: () => { st.kind = v; loadList(); } }, t)));
+  const file = el('input', { type: 'file', accept: '.png,.zip,image/png,application/zip', multiple: true, hidden: true,
+    onchange: () => { const fs = [...file.files]; file.value = ''; if (fs.length) importFiles(fs); } });
   fill($('#persona-list'),
+    el('div', { class: 'pl-drophint' }, '松开以导入人设卡（PNG 可多张，也可以是导出的 zip 或 SillyTavern 角色卡）'),
     el('div', { class: 'pl-head' },
       el('h2', {}, '人设'), el('span', { class: 'muted small', id: 'pl-count' }),
       el('span', { class: 'grow' }),
+      file,
+      el('button', { class: 'btn ghost', onclick: () => file.click(),
+        title: '选择人设卡图片导入（PNG，可多选；也可以是导出的 zip 或 SillyTavern 角色卡）。也可以直接把文件拖到这个页面' }, '导入人设卡'),
+      el('button', { class: 'btn ghost', id: 'pl-export', onclick: () => exportList(st, st.list.items.length) }, '导出'),
       el('button', { class: 'btn accent', title: '默认是原创人物；已有作品的角色把「原创人物」关掉，再用名称旁的「🔍 Danbooru」导入',
         onclick: () => openDetail('new') }, '＋ 新建人设')),
     el('div', { class: 'pl-tools' }, search, seg),
@@ -88,6 +97,12 @@ function drawList() {
 function renderGrid() {
   const { items, groups, total } = st.list;
   $('#pl-count').textContent = total ? `共 ${total} 个` : '';
+  const filtered = !!(st.q || st.kind || st.group);
+  Object.assign($('#pl-export'), {
+    disabled: !items.length,
+    textContent: filtered && items.length < total ? `导出筛选结果（${items.length}）` : '导出全部',
+    title: '把列表里的人设导出为 zip，每个人设一张人设卡（PNG）',
+  });
   for (const b of $('#pl-kind').children) b.classList.toggle('on', b.dataset.v === st.kind);
   if (st.group && !groups.some(g => g.name === st.group)) st.group = '';
   fill($('#pl-groups'), groups.length ? [
@@ -168,6 +183,8 @@ function drawHeader() {
     el('span', { class: 'grow' }),
     el('button', { class: 'btn ghost', title: '用左侧「生成预览」中选中的造型填写绘图页的 count / character / series / appearance',
       onclick: () => fillDraw(p, side.outfitId()) }, '填入绘图页'),
+    el('button', { class: 'btn ghost', onclick: exportCurrent,
+      title: '导出为一张 PNG 人设卡：卡面是封面，图片里带着这个人设的全部资料，拖进别人的人设页即可导入' }, '导出人设卡'),
     p.id ? el('button', { class: 'btn ghost danger', onclick: del }, '删除') : null,
     el('button', { class: 'btn accent', onclick: save, title: 'Ctrl+S' }, '保存'));
 }
@@ -192,6 +209,19 @@ async function save() {
     toastError(e);
     return false;
   }
+}
+
+async function exportCurrent() {
+  if ((!st.edit.id || isDirty()) && !await save()) return;     // 导出的是已保存的资料
+  exportCard(st.edit);
+}
+
+async function importFiles(files) {
+  const results = await importCards(files);
+  st.list.stale = true;
+  const done = results.filter(r => r.persona);
+  if (results.length === 1 && done.length === 1 && st.view === 'list') openDetail(done[0].persona.id);
+  else if (st.view === 'list') loadList();
 }
 
 async function del() {

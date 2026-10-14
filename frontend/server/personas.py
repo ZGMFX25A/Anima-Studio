@@ -5,7 +5,10 @@
 """
 from __future__ import annotations
 
+import io
 import json
+import logging
+import os
 import re
 import secrets
 import shutil
@@ -13,6 +16,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from typing import IO
 
 from PIL import Image
 
@@ -22,8 +26,9 @@ DB_PATH = config.DATA_DIR / "personas.db"
 FILES_DIR = config.DATA_DIR / "personas"
 FILES_DIR.mkdir(parents=True, exist_ok=True)
 KINDS = ("original", "existing")
-COVER_SIDE, THUMB_SIDE = 1280, 480
+THUMB_SIDE = 480
 _lock = threading.Lock()
+log = logging.getLogger("frontend.personas")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS personas (
@@ -170,6 +175,41 @@ def _check_names(c: sqlite3.Connection, d: dict, pid: int | None) -> None:
                 raise PersonaError(f"「{mine[k]}」已被人设「{r['name']}」用作名称或别名，名称和别名需要全库唯一")
 
 
+def _taken(exclude: int | None = None) -> dict[str, tuple[int, str, bool]]:
+    """全库已用的名称 / 别名：norm → (人设 id, 人设名称, 是否为名称)。"""
+    out: dict[str, tuple[int, str, bool]] = {}
+    with _lock, _conn() as c:
+        for r in c.execute("SELECT id, name, aliases FROM personas WHERE id != ?", (exclude or -1,)):
+            for n in json.loads(r["aliases"]):
+                out.setdefault(norm(n), (r["id"], r["name"], False))
+            out[norm(r["name"])] = (r["id"], r["name"], True)
+    return out
+
+
+def find_conflict(name: str) -> dict | None:
+    """名称与哪个人设的名称或别名重复：{id, name, by: name|alias}。"""
+    hit = _taken().get(norm(name))
+    return {"id": hit[0], "name": hit[1], "by": "name" if hit[2] else "alias"} if hit else None
+
+
+def unique_name(name: str) -> str:
+    """不与任何人设名称 / 别名重复的名称：名称 (2)、名称 (3)……"""
+    taken = _taken()
+    base = re.sub(r"\s*\(\d+\)$", "", name.strip()) or name.strip()
+    i = 2
+    while norm(f"{base} ({i})") in taken:
+        i += 1
+    return f"{base} ({i})"
+
+
+def drop_taken_aliases(d: dict, exclude: int | None = None) -> list[str]:
+    """去掉已被其它人设用作名称 / 别名的别名（exclude = 将被覆盖的人设），返回去掉的别名。"""
+    taken = _taken(exclude)
+    aliases = split_list(d.get("aliases"))
+    d["aliases"] = [a for a in aliases if norm(a) not in taken]
+    return [a for a in aliases if norm(a) in taken]
+
+
 # ───────────────────────────── 增删改查 ─────────────────────────────
 
 def summary(p: dict) -> dict:
@@ -255,22 +295,34 @@ def delete(pid: int) -> int | None:
 # ───────────────────────────── 封面 ─────────────────────────────
 
 def cover_path(pid: int, thumb: bool = False) -> Path:
-    return FILES_DIR / str(pid) / ("cover_thumb.webp" if thumb else "cover.webp")
+    """封面副本 cover.png（原图无损、不缩小）；旧版存的是 cover.webp（长边 1280、有损），仍可读取。"""
+    d = FILES_DIR / str(pid)
+    if thumb:
+        return d / "cover_thumb.webp"
+    png = d / "cover.png"
+    return png if png.exists() or not (d / "cover.webp").exists() else d / "cover.webp"
 
 
-def _save_cover(pid: int, src: Path, gid: int | None) -> dict | None:
-    with _lock, _conn() as c:
-        if not c.execute("SELECT 1 FROM personas WHERE id = ?", (pid,)).fetchone():
-            return None
+def _write_cover_png(d: Path, src: Path | IO[bytes]) -> Image.Image:
+    """原图无损存成 cover.png（先写临时文件再替换，读取方不会拿到写了一半的文件），去掉旧版的 cover.webp。
+    只存像素，不带原图的文本块（生成参数、人设卡数据）。"""
     img = Image.open(src)
     img.load()
     if img.mode not in ("RGB", "RGBA"):
-        img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
-    d = FILES_DIR / str(pid)
+        img = img.convert("RGBA" if "A" in img.getbands() or "transparency" in img.info else "RGB")
     d.mkdir(parents=True, exist_ok=True)
-    full = img.copy()
-    full.thumbnail((COVER_SIDE, COVER_SIDE))
-    full.save(cover_path(pid), "WEBP", quality=90)
+    tmp = d / "cover.png.tmp"
+    img.save(tmp, "PNG")
+    os.replace(tmp, d / "cover.png")
+    (d / "cover.webp").unlink(missing_ok=True)
+    return img
+
+
+def _save_cover(pid: int, src: Path | IO[bytes], gid: int | None) -> dict | None:
+    with _lock, _conn() as c:
+        if not c.execute("SELECT 1 FROM personas WHERE id = ?", (pid,)).fetchone():
+            return None
+    img = _write_cover_png(FILES_DIR / str(pid), src)
     img.thumbnail((THUMB_SIDE, THUMB_SIDE))
     img.save(cover_path(pid, True), "WEBP", quality=86)
     with _lock, _conn() as c:
@@ -293,9 +345,38 @@ def set_cover_from_ref(pid: int, h: str) -> dict | None:
     return _save_cover(pid, src, None)
 
 
+def set_cover_from_bytes(pid: int, raw: bytes) -> dict | None:
+    """人设卡导入：卡片图片本身就是封面。"""
+    return _save_cover(pid, io.BytesIO(raw), None)
+
+
+def migrate_legacy_covers() -> int:
+    """旧版封面副本 cover.webp 是缩小过的有损图：来源生成记录的原图还在时，用原图重建无损 cover.png。
+    上传的封面、原图已删除的保持 webp。已迁移的不再处理，返回本次迁移的数量。"""
+    with _lock, _conn() as c:
+        rows = c.execute("SELECT id, cover_gid FROM personas WHERE cover != '' AND cover_gid IS NOT NULL").fetchall()
+    n = 0
+    for r in rows:
+        d = FILES_DIR / str(r["id"])
+        if not (d / "cover.webp").exists() or (d / "cover.png").exists():
+            continue
+        src = gallery.image_path(r["cover_gid"])
+        if not src or not src.exists():
+            continue
+        try:
+            _write_cover_png(d, src)
+        except OSError as e:
+            log.warning("人设 %s 的封面无法从原图重建，保留 webp：%s", r["id"], e)
+            continue
+        with _lock, _conn() as c:   # 换封面版本号，页面不再用缓存里的旧图（不改 updated_at，列表顺序不变）
+            c.execute("UPDATE personas SET cover = ? WHERE id = ?", (str(int(time.time() * 1000)), r["id"]))
+        n += 1
+    return n
+
+
 def clear_cover(pid: int) -> dict | None:
-    for t in (False, True):
-        cover_path(pid, t).unlink(missing_ok=True)
+    for name in ("cover.png", "cover.png.tmp", "cover.webp", "cover_thumb.webp"):
+        (FILES_DIR / str(pid) / name).unlink(missing_ok=True)
     with _lock, _conn() as c:
         c.execute("UPDATE personas SET cover = '', cover_gid = NULL, updated_at = ? WHERE id = ?", (time.time(), pid))
     return get(pid)

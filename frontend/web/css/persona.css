@@ -6,6 +6,18 @@
 .pl-tools { display: flex; gap: 12px; align-items: center; }
 .pl-tools input { max-width: 360px; }
 .pl-groups:empty { display: none; }
+/* 人设卡：拖入导入 / 重名询问 / 导入结果 */
+.plist.dropping { outline: 2px dashed var(--accent); outline-offset: -8px; background: var(--accent-soft); }
+.pl-drophint { display: none; position: sticky; top: 0; z-index: 2; justify-content: center; padding: 10px 14px; border-radius: 10px;
+  background: var(--panel-3); border: 1px solid var(--accent); color: var(--accent); font-weight: 600; pointer-events: none; }
+.plist.dropping .pl-drophint { display: flex; }
+.plist.dropping > :not(.pl-drophint) { pointer-events: none; }
+.card-conflict p, .card-report p { margin: 0 0 8px; color: var(--text); }
+.card-conflict ul, .card-report ul { margin: 0 0 10px; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.card-conflict .switch-row { margin: 4px 0 6px; }
+.card-report ul { max-height: 50vh; overflow-y: auto; }
+.card-report li.bad b { color: var(--danger); }
+.card-report li.skip { opacity: .7; }
 .chip.pick { cursor: pointer; font: inherit; font-size: 12px; }
 .chip.pick:hover { border-color: var(--accent); }
 .chip.pick.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }

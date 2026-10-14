@@ -170,7 +170,7 @@ export function createSide(ctx) {
   function items() {
     const p = ctx.p;
     const out = [];
-    // 封面来源图的文件还在时，封面就是那张图；文件丢失了则单独显示封面副本（cover.webp 不受影响）
+    // 封面来源图的文件还在时，封面就是那张图；文件丢失了则单独显示封面副本（cover.png 不受影响）
     const coverInList = p.cover_gid != null && ss.images.some(r => r.id === p.cover_gid && r.exists);
     if (p.cover && !coverInList) out.push({ key: 'cover', cover: true, src: coverUrl(p, false), thumb: coverUrl(p) });
     for (const r of ss.images) {
