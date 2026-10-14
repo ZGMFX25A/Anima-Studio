@@ -5,7 +5,7 @@
 - **绘图**：Anima 系列模型，人物参考（1~3 张参考图）、动作参考（照片自动检测骨架，或直接给骨架图）
 - **AI 填写**：用一段描述让 LLM 生成或修改提示词字段，可联网检索 Danbooru 角色与画师；
   上传的灵感图、人物 / 动作参考图先由「识图模型」逐张详细描述，再交给 LLM 生成（生成用的模型不必能看图）
-- **人设**：保存常用角色（已有角色从 Danbooru 导入，原创角色由 AI 整理），一键填入绘图页
+- **人设**：保存常用角色（已有角色从 Danbooru 导入，原创角色由 AI 整理），一键填入绘图页；可导出为人设卡（一张 PNG 封面图，图片里带着完整资料）分享，拖进人设页即可导入，也能读取 SillyTavern 角色卡
 - **历史 / 收藏**：每张图的完整参数，可一键复用
 
 ```
@@ -146,7 +146,7 @@ WSL / Hyper-V / Docker 有时会临时占用 8188、8190、8200 端口，导致�
 
 | 文档 | 内容 |
 |---|---|
-| [frontend/DESIGN.md](frontend/DESIGN.md) | 前端设计：各页面、LLM 辅助填写、联网检索、存储、人设、识图 |
+| [frontend/DESIGN.md](frontend/DESIGN.md) | 前端设计：各页面、LLM 辅助填写、联网检索、存储、人设、识图、人设卡 |
 | [frontend/prompts/README.md](frontend/prompts/README.md) | 发给 LLM 的全部提示词文件说明，修改后即时生效 |
 | [painter/README.md](painter/README.md) | 绘画模块：HTTP 接口、模型兼容性实测、已知限制 |
 | [painter/PROMPT_GUIDE.md](painter/PROMPT_GUIDE.md) | 开启人物 / 动作参考时提示词的注意事项 |

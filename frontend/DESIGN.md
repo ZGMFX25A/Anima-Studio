@@ -481,7 +481,7 @@ AI 填写卡片里的两个开关（「联网检索（角色 / 画师）」「�
 ### 11.6 存储
 
 - `data/personas.db`（personas 表，造型 / 别名 / 分组为 JSON 列）。
-- 封面复制到 `data/personas/<id>/cover.webp`（长边 1280）与 `cover_thumb.webp`（480），删除预览图或历史图后封面仍在。
+- 封面复制到 `data/personas/<id>/cover.png`（**原图无损、不缩小**，只存像素、不带原图的文本块）与 `cover_thumb.webp`（480，列表用），删除预览图或历史图后封面仍在。2026-10-14 前的版本存的是 `cover.webp`（长边 1280、有损 q90）：启动时自动迁移一次，来源生成记录的原图还在的用原图重建 `cover.png`；上传的封面或原图已删除的保持 webp（仍可读取），重新设一次封面就换成 PNG。
 - 预览图是普通生成记录：`gallery.db` 的 `images.persona_id` 列（旧库启动时自动补列）；`/api/gallery` 排除这些记录，绘图页的任务列表也不显示人设预览任务。
 - 删除人设：删除资料、封面与该人设的全部预览图（预览图不在历史页，留着就再也看不到了）。
 
@@ -530,3 +530,53 @@ AI 填写卡片里的两个开关（「联网检索（角色 / 画师）」「�
 - 卡片下方新增可折叠的「识图结果」，逐张显示识图原文、耗时或「缓存」、失败原因；日志 `llm_last_request.json` 记在 `recognition`。
 
 `/api/llm/fill` 新增可选参数 `vision_provider_id`、`vision_model_id`（不传 = 同上），响应新增 `recognition: {model, items: [{label, kind, text, error, cached, elapsed}]}`。
+
+---
+
+## 13. 人设卡（2026-10-14 新增）
+
+把人设导出成一张 PNG 图片分享；图片里带着人设的完整资料，拖进人设页即可导入。
+
+### 13.0 已确认的决定
+
+| # | 问题 | 决定 |
+|---|---|---|
+| 1 | 卡面样式 | **纯封面图**：卡面就是封面原图，不加任何文字；没有封面时生成占位图（渐变底 + 首字 + 名称 + 「Anima Studio · 人设卡」） |
+| 2 | 导入后 | **直接保存**（含封面），可一次导入多张；只导入一张时自动打开它的详情页 |
+| 3 | 重名 | **每次询问**：覆盖 / 另存为新（自动改名「名称 (2)」）/ 跳过；批量时可勾选「后面再遇到重名也这样处理」 |
+| 4 | 附加功能 | 批量导出（zip）、拖入导入、兼容 SillyTavern 角色卡 |
+| 5 | 封面副本 | 改为无损 PNG、不缩小（见 §11.6），人设卡反复转手画质不变 |
+
+### 13.1 格式
+
+- PNG 的 iTXt 文本块，关键字 `anima_persona`，zlib 压缩，内容为 JSON：
+  `{"format": "anima-studio/persona", "version": 1, "app", "exported_at", "has_cover", "persona": {…}}`
+  另写 `Title`（人设名称）与 `Software`（Anima Studio）。
+- `persona` 含：名称、别名、原创 / 已有（`kind`）、角色标签、作品、主体、画师偏好、分组、基础标签、外观描述、全部造型（含专属角色标签）、Danbooru 来源；**不含**本机 id、封面来源记录、预览图。
+- `has_cover = false`（占位图）时导入不设封面；覆盖已有人设时保留它原来的封面。
+- 卡面 = 封面原图，不缩小：封面副本是 PNG 时直接用它；旧版 `cover.webp` 且来源生成记录的文件还在时用那张原图，否则用 webp。原图的文本块（生成参数等）不会带进卡里。
+- 聊天软件压缩图片会丢掉文本块：分享要用「原图」或文件方式发送。没有数据的图片导入时会说明这个原因。
+
+### 13.2 导出
+
+- 详情页顶部「导出人设卡」：有未保存的修改（或尚未保存）时先自动保存，再下载 `人设卡_<名称>.png`。
+- 列表页「导出全部」/「导出筛选结果（N）」：按当前搜索 / 类型 / 分组导出 zip（`人设卡_<日期时间>.zip`，每个人设一张 `<名称>.png`）。
+
+### 13.3 导入
+
+- 列表页「导入人设卡」（可多选），或把文件直接拖到列表页；导出的 zip 在页面里解开（只取 PNG）。
+- 卡里的数据按类型逐项取值、限制长度，再经过人设保存时的同一套规范化；造型 id 只保留字母数字。
+- 重名：卡的名称与已有人设的名称或别名相同即视为重名。卡里的别名若已被其它人设用作名称 / 别名，导入时去掉并提示。
+- 覆盖：资料全部换成卡里的（含分组），卡里有封面时封面也换掉；已有预览图保留。
+- SillyTavern 角色卡（tEXt `ccv3` / `chara`，V1 / V2 / V3）：只取名称与描述（`{{char}}` 换成名称）建原创人设，描述放进外观描述，卡面作封面，附一套空的默认造型；提示可用「AI 整理」生成标签。
+- 导入多张时，有失败 / 改名 / 去掉别名等情况会弹出逐张结果，否则只提示数量。
+
+### 13.4 接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/personas/{id}/card` | 导出一张人设卡（PNG，`Content-Disposition` 带中文文件名） |
+| GET | `/api/personas/export.zip?q=&kind=&group=` | 按列表筛选条件批量导出 |
+| POST | `/api/personas/cards/import` | `{data: PNG 的 data URL, on_conflict: ""\|overwrite\|rename\|skip}`；重名且未给 `on_conflict` 时返回 409 `NAME_CONFLICT`，`detail` 含 `conflict`、`suggested_name`；成功返回 `{status: created\|overwritten\|skipped, persona, source: anima\|sillytavern, renamed_from, dropped_aliases, notes}` |
+
+代码：`server/personacard.py`、`web/js/personacard.js`。

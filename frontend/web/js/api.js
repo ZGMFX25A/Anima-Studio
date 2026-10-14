@@ -49,15 +49,43 @@ async function request(method, url, body, opts = {}) {
   let data = null;
   const text = await resp.text();
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  if (!resp.ok) {
-    const err = (data && data.error) || {};
-    let message = err.message || (typeof data === 'string' ? data : '') || `HTTP ${resp.status}`;
-    if (err.detail && Array.isArray(err.detail)) {
-      message += '：' + err.detail.map(d => `${(d.loc || []).slice(1).join('.')} ${d.msg}`).join('；');
-    }
-    throw new ApiError(message, err.code || `HTTP_${resp.status}`, resp.status, err.detail);
-  }
+  if (!resp.ok) throw responseError(resp, data);
   return data;
+}
+
+function responseError(resp, data) {
+  const err = (data && data.error) || {};
+  let message = err.message || (typeof data === 'string' ? data : '') || `HTTP ${resp.status}`;
+  if (err.detail && Array.isArray(err.detail)) {
+    message += '：' + err.detail.map(d => `${(d.loc || []).slice(1).join('.')} ${d.msg}`).join('；');
+  }
+  return new ApiError(message, err.code || `HTTP_${resp.status}`, resp.status, err.detail);
+}
+
+// 下载文件（文件名取自 Content-Disposition），返回文件名；出错时与 api.* 一样抛 ApiError
+export async function download(url) {
+  let resp;
+  try { resp = await fetch(url); } catch {
+    throw new ApiError('无法连接前端服务，请确认启动窗口仍在运行', 'NETWORK', 0);
+  }
+  if (!resp.ok) {
+    const text = await resp.text();
+    let data = text;
+    try { data = JSON.parse(text); } catch { /* 不是 JSON */ }
+    throw responseError(resp, data);
+  }
+  const blob = await resp.blob();
+  const cd = resp.headers.get('Content-Disposition') || '';
+  const m = /filename\*=UTF-8''([^;]+)/i.exec(cd) || /filename="?([^";]+)"?/i.exec(cd);
+  const name = m ? decodeURIComponent(m[1]) : url.split('?')[0].split('/').pop();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  return name;
 }
 
 export const api = {

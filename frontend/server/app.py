@@ -4,14 +4,16 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import time
 from pathlib import Path
 
 import httpx
 from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
-from . import config, gallery, personas, procs, storage
+from . import config, gallery, personacard, personas, procs, storage
 from .generation import TRACKER, FormError, load_json
 from .llm import client as llm_client
 from .llm import fill as llm_fill
@@ -27,8 +29,11 @@ log = logging.getLogger("frontend.app")
 app = FastAPI(title="Anima Studio Frontend", docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 
-def err(status: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
+def err(status: int, code: str, message: str, detail=None) -> JSONResponse:
+    body = {"code": code, "message": message}
+    if detail is not None:
+        body["detail"] = detail
+    return JSONResponse(status_code=status, content={"error": body})
 
 
 @app.middleware("http")
@@ -497,6 +502,33 @@ def persona_create(data: dict = Body(...)):
         return err(422, "INVALID", str(e))
 
 
+# 人设卡：要放在 /api/personas/{pid} 之前，否则 export.zip 会被当成 pid
+@app.get("/api/personas/export.zip")
+def persona_export_zip(q: str = "", kind: str = "", group: str = ""):
+    """按列表页当前的筛选条件，把人设卡打包成 zip。"""
+    ids = [p["id"] for p in personas.list_all(q, kind, group)["items"]]
+    if not ids:
+        return err(404, "NOT_FOUND", "没有可导出的人设")
+    path = personacard.export_zip(ids)
+    return FileResponse(path, media_type="application/zip", filename=f"人设卡_{time.strftime('%Y%m%d-%H%M')}.zip",
+                        background=BackgroundTask(path.unlink, missing_ok=True))
+
+
+@app.post("/api/personas/cards/import")
+def persona_card_import(data: str = Body(...), on_conflict: str = Body("")):
+    """导入一张人设卡（PNG 的 data URL）并保存；重名且没给 on_conflict 时返回 409，由页面询问后重发。"""
+    try:
+        raw = gallery.decode_data_url(data)
+    except ValueError:
+        return err(422, "BAD_CARD", "无法读取文件")
+    try:
+        return personacard.import_card(raw, on_conflict)
+    except personacard.CardConflict as e:
+        return err(409, "NAME_CONFLICT", str(e), e.info)
+    except (personacard.CardError, PersonaError) as e:
+        return err(422, "BAD_CARD", str(e))
+
+
 @app.post("/api/personas/danbooru/search")
 def persona_search(q: str = Body("", embed=True)):
     try:
@@ -556,6 +588,17 @@ def persona_delete(pid: int):
     if n is None:
         return err(404, "NOT_FOUND", "人设不存在")
     return {"ok": True, "images_deleted": n}
+
+
+@app.get("/api/personas/{pid}/card")
+def persona_card(pid: int):
+    """导出人设卡：封面原图（没有封面时生成占位图）+ PNG 内嵌的完整资料。"""
+    r = personacard.export_card(pid)
+    if not r:
+        return err(404, "NOT_FOUND", "人设不存在")
+    data, name = r
+    return Response(data, media_type="image/png",
+                    headers={"Content-Disposition": personacard.disposition(f"人设卡_{personacard.safe_filename(name)}.png")})
 
 
 @app.get("/api/personas/{pid}/images")

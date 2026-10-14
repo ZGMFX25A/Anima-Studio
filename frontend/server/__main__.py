@@ -41,6 +41,10 @@ def main() -> None:
     n = gallery.cleanup_refs(min_age=7 * 86400)   # 上传后 7 天仍未被任何记录引用的参考图
     if n:
         log.info("已清理 %d 张未使用的参考图", n)
+    from . import personas  # noqa: E402
+    n = personas.migrate_legacy_covers()          # 旧版 webp 封面副本 → 原图无损 PNG（只处理一次）
+    if n:
+        log.info("已用原图重建 %d 个人设的无损封面", n)
 
     server = uvicorn.Server(uvicorn.Config(app, host=config.HOST, port=config.PORT, log_level="warning"))
     t = threading.Thread(target=server.run, daemon=True)
