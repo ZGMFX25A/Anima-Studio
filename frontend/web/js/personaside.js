@@ -401,22 +401,28 @@ export function createSide(ctx) {
     const active = jobs.filter(j => !TERMINAL.includes(j.status) || (j.status === 'succeeded' && !j.gallery_id && (j._waits || 0) < 10));
     if (!active.length) { clearInterval(pollTimer); pollTimer = null; return; }
     for (const j of active) {
+      let v;
       try {
-        const v = await api.get(`/api/jobs/${j.job_id}`);
-        const was = j.status;
-        Object.assign(j, v);
-        if (v.status === 'succeeded' && !v.gallery_id) j._waits = (j._waits || 0) + 1;
-        const done = v.status === 'succeeded' && v.gallery_id;
-        if (done && !j._done) {
-          j._done = true;
-          if (ctx.p?.id === j.persona_id && ss.root) {
-            ctx.p.image_count = (ctx.p.image_count || 0) + 1;
-            loadImages(v.gallery_id);
-          } else toast(`人设「${j.persona_name}」的预览已完成`, 'ok');
-        } else if (!TERMINAL.includes(was) && v.status === 'failed') {
-          toast(`预览生成失败：${errorText(v.error)}`, 'error', 7000);
-        }
-      } catch { /* 下次再试 */ }
+        v = await api.get(`/api/jobs/${j.job_id}`);
+      } catch (e) {
+        if (e.status !== 404) continue;   // 连不上：下次再试
+        v = { status: 'failed', error: { message: '任务记录已丢失（前端服务重启过），请重新生成' } };
+      }
+      const was = j.status;
+      Object.assign(j, v);
+      if (v.status === 'succeeded' && !v.gallery_id && (j._waits = (j._waits || 0) + 1) >= 10) {
+        Object.assign(j, { status: 'failed', error: { message: '图片已生成，但没有写入图库（详见 logs/frontend.log）' } });
+      }
+      const done = j.status === 'succeeded' && j.gallery_id;
+      if (done && !j._done) {
+        j._done = true;
+        if (ctx.p?.id === j.persona_id && ss.root) {
+          ctx.p.image_count = (ctx.p.image_count || 0) + 1;
+          loadImages(v.gallery_id);
+        } else toast(`人设「${j.persona_name}」的预览已完成`, 'ok');
+      } else if (was !== 'failed' && j.status === 'failed') {
+        toast(`人设「${j.persona_name}」预览生成失败：${errorText(j.error)}`, 'error', 7000);
+      }
     }
     if (ss.root) renderImages();
   }

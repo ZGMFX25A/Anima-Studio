@@ -116,6 +116,12 @@ def cancel_job(jid: str):
     return JSONResponse(status_code=status, content=body)
 
 
+@app.post("/api/jobs/{jid}/dismiss")
+def dismiss_job(jid: str):
+    TRACKER.dismiss(jid)
+    return {"ok": True}
+
+
 # ───────────────────────────── 图库 ─────────────────────────────
 
 @app.get("/api/gallery")

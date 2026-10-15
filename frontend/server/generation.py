@@ -150,18 +150,15 @@ class Tracker:
             time.sleep(1.0)
             try:
                 r = httpx.get(f"{config.PAINTER_URL}/v1/jobs/{jid}", timeout=10)
+                if r.status_code == 404:   # 绘画模块重启过，任务已不在
+                    return self._fail(jid, "JOB_LOST", "绘画模块重启过，任务已丢失，请重新生成")
                 r.raise_for_status()
                 job = r.json()
                 misses = 0
             except (httpx.HTTPError, ValueError):
                 misses += 1
                 if misses >= 30:
-                    with self.lock:
-                        e = self.jobs.get(jid)
-                        if e:
-                            e["job"] = {**e["job"], "status": "failed", "error": {
-                                "code": "PAINTER_UNAVAILABLE", "message": "与绘画模块的连接中断"}}
-                    return
+                    return self._fail(jid, "PAINTER_UNAVAILABLE", "与绘画模块的连接中断")
                 continue
             with self.lock:
                 e = self.jobs.get(jid)
@@ -170,13 +167,28 @@ class Tracker:
                 e["job"] = job
             if job["status"] in TERMINAL:
                 if job["status"] == "succeeded":
-                    self._record(jid)
+                    # 写不进图库时转为失败：否则页面上一直是「已完成但没有图」，既不提示也关不掉
+                    try:
+                        if not self._record(jid):
+                            self._fail(jid, "ENGINE_ERROR", "绘画模块没有返回图片")
+                    except Exception as ex:  # noqa: BLE001
+                        log.exception("任务 %s 写入图库失败", jid)
+                        self._fail(jid, "RECORD_FAILED", f"图片已生成，但写入图库失败：{ex}")
                 return
 
-    def _record(self, jid: str) -> None:
-        e = self.jobs[jid]
+    def _fail(self, jid: str, code: str, message: str) -> None:
+        with self.lock:
+            e = self.jobs.get(jid)
+            if e:
+                e["job"] = {**e["job"], "status": "failed", "error": {"code": code, "message": message}}
+
+    def _record(self, jid: str) -> int | None:
+        e = self.jobs.get(jid)
+        if not e:
+            return None
         job = e["job"]
         params = job.get("params") or {}
+        gid = None
         for img in job.get("images", []):
             if img.get("kind") != "final":
                 continue
@@ -186,6 +198,7 @@ class Tracker:
             with self.lock:
                 e["gallery_id"] = gid
             log.info("任务 %s 完成，已写入图库 #%s", jid, gid)
+        return gid
 
     def view(self, jid: str) -> dict | None:
         with self.lock:
@@ -203,6 +216,13 @@ class Tracker:
             ids = sorted((k for k, e in self.jobs.items() if e["persona_id"] == persona_id),
                          key=lambda k: self.jobs[k]["submitted_at"])
         return [v for v in (self.view(k) for k in ids) if v]
+
+    def dismiss(self, jid: str) -> None:
+        """页面上关掉失败 / 取消的任务：从本次运行的列表中移除（刷新页面后也不会再出现）。"""
+        with self.lock:
+            e = self.jobs.get(jid)
+            if e and e["job"]["status"] in ("failed", "cancelled"):
+                self.jobs.pop(jid, None)
 
     def forget_gallery(self, gid: int) -> None:
         """图库记录被删除后，把对应任务从本次运行的列表中移除（刷新页面后也不会再出现）。"""
