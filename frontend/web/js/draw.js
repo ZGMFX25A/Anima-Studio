@@ -57,6 +57,10 @@ export function initDraw() {
     toast(`已锁定种子 ${s}`, 'ok');
   });
   $('#stage-cancel').addEventListener('click', cancelSelected);
+  $('#stage-error-close').addEventListener('click', () => {
+    const j = selectedJob();
+    if (j) dismissJob(j);
+  });
   $('#stage-img').addEventListener('error', () => {   // 文件已不存在：直接从本次结果里去掉
     const j = selectedJob();
     if (j) removeJob(j.job_id);
@@ -278,25 +282,41 @@ function startPolling() {
   pollTimer = setInterval(poll, 1000);
 }
 
+// 已有最终结果：失败 / 取消 / 成功且已写入图库
+const settled = (j) => j.status === 'failed' || j.status === 'cancelled' || (j.status === 'succeeded' && !!j.gallery_id);
+
+let polling = false;
 async function poll() {
-  const active = session.jobs.filter(j => !TERMINAL.includes(j.status) || (j.status === 'succeeded' && !j.gallery_id && !j._gaveUp));
+  if (polling) return;   // 上一轮请求还没回来（服务卡顿）时不叠加
+  const active = session.jobs.filter(j => !settled(j));
   if (!active.length) { clearInterval(pollTimer); pollTimer = null; return; }
-  for (const j of active) {
-    try {
-      const v = await api.get(`/api/jobs/${j.job_id}`);
-      const was = j.status;
-      Object.assign(j, v);
-      if (v.status === 'succeeded' && !v.gallery_id) j._waits = (j._waits || 0) + 1;
-      if (j._waits > 10) j._gaveUp = true;
-      if (!TERMINAL.includes(was) && TERMINAL.includes(v.status)) onFinished(j);
-      else if (was === 'succeeded' && v.gallery_id) onFinished(j);
-    } catch { /* 下次再试 */ }
-  }
+  polling = true;
+  try {
+    for (const j of active) {
+      try {
+        Object.assign(j, await api.get(`/api/jobs/${j.job_id}`));
+      } catch (e) {
+        if (e.status !== 404) continue;   // 连不上：下次再试
+        markFailed(j, '任务记录已丢失（前端服务重启过），请重新生成');
+      }
+      // 成功但迟迟没写入图库：按失败处理，不让卡片一直停在「没有图也没有提示」
+      if (j.status === 'succeeded' && !j.gallery_id && (j._waits = (j._waits || 0) + 1) > 10) {
+        markFailed(j, '图片已生成，但没有写入图库（详见 logs/frontend.log）');
+      }
+      if (settled(j) && session.jobs.includes(j)) onFinished(j);
+    }
+  } finally { polling = false; }
   renderPreview();
   renderStrip();
 }
 
+function markFailed(j, message) {
+  Object.assign(j, { status: 'failed', error: { code: 'LOST', message } });
+}
+
 function onFinished(j) {
+  if (j._notified) return;
+  j._notified = true;
   if (j.status === 'succeeded' && j.gallery_id) {
     app.lastSeed = j.params?.seed ?? app.lastSeed;
     emit('gallery-new', j.gallery_id);
@@ -369,8 +389,8 @@ function renderPreview() {
   } else if (!running) {
     img.hidden = true;
     $('#result-bar').hidden = true;
-    if (j.status === 'failed') { errBox.hidden = false; errBox.textContent = `生成失败：${errorText(j.error)}`; }
-    else if (j.status === 'cancelled') { errBox.hidden = false; errBox.textContent = '任务已取消'; }
+    if (j.status === 'failed') { errBox.hidden = false; $('#stage-error-text').textContent = `生成失败：${errorText(j.error)}`; }
+    else if (j.status === 'cancelled') { errBox.hidden = false; $('#stage-error-text').textContent = '任务已取消'; }
   } else {
     $('#result-bar').hidden = true;
   }
@@ -383,7 +403,7 @@ function renderStrip() {
     const cls = ['strip-item', j.job_id === session.selected ? 'sel' : '', running ? 'running' : '',
       j.status === 'failed' ? 'failed' : ''].join(' ');
     const item = el('div', {
-      class: cls, title: j.status,
+      class: cls, title: j.status === 'failed' ? `生成失败：${errorText(j.error)}` : j.status,
       onclick: () => { session.selected = j.job_id; renderPreview(); renderStrip(); },
     });
     if (j.status === 'succeeded' && j.gallery_id) {
@@ -391,7 +411,10 @@ function renderStrip() {
       img.onerror = () => removeJob(j.job_id);
       item.append(img);
     } else if (running) item.textContent = `${Math.round(j.progress?.percent || 0)}%`;
-    else item.textContent = j.status === 'failed' ? '失败' : '取消';
+    else if (j.status === 'failed' || j.status === 'cancelled') {
+      item.append(j.status === 'failed' ? '失败' : '取消',
+        el('button', { class: 'x', title: '关闭', onclick: (e) => { e.stopPropagation(); dismissJob(j); } }, '×'));
+    } else item.textContent = '保存中';   // 已完成，正在写入图库
     return item;
   }));
 }
@@ -410,6 +433,12 @@ function removeJob(jobId, redraw = true) {
     session.selected = next ? next.job_id : null;
   }
   if (redraw) { renderPreview(); renderStrip(); }
+}
+
+// 关掉失败 / 取消的任务：服务端也一并忘掉，刷新页面后不再出现
+function dismissJob(j) {
+  removeJob(j.job_id);
+  api.post(`/api/jobs/${j.job_id}/dismiss`).catch(() => {});
 }
 
 async function deleteSelected() {

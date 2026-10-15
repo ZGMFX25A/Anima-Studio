@@ -224,8 +224,8 @@ class JobManager:
 
         # 4. 取回结果
         job.progress = Progress(stage="saving", percent=100 - _SAVE)
-        hist = self.client.history(prompt_id)
-        if hist.get("status", {}).get("status_str") == "error":
+        hist = self._wait_history(prompt_id)
+        if (hist.get("status") or {}).get("status_str") == "error":
             raise JobFailed(ErrorCode.ENGINE_ERROR, "ComfyUI 执行失败", hist.get("status"))
         out_dir = settings.output_dir / datetime.now().strftime("%Y-%m-%d")
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -254,6 +254,18 @@ class JobManager:
                 (job.images if kind == "final" else job.intermediates).append(res)
         if not job.images:
             raise JobFailed(ErrorCode.ENGINE_ERROR, "ComfyUI 没有返回图片", hist.get("status"))
+
+    def _wait_history(self, prompt_id: str, wait: float = 30.0) -> dict:
+        """ComfyUI 先发 execution_success、收尾后才把这次执行写进历史记录，紧接着去读可能还是空的：
+        等记录出现（一次性整条写入）再返回，超时返回空。"""
+        deadline = time.time() + wait
+        while True:
+            hist = self.client.history(prompt_id)
+            if hist or time.time() > deadline:
+                if not hist:
+                    log.warning("prompt %s: history still empty after %.0fs", prompt_id, wait)
+                return hist
+            time.sleep(0.2)
 
 
 _TRANSIENT_MARKERS = ("Fault failed", "device not ready", "VRAM Allocation failed")

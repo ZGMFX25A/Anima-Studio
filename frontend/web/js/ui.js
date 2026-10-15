@@ -25,9 +25,17 @@ export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 // ───────── 提示 ─────────
 export function toast(message, kind = 'info', ms = 3800) {
-  const t = el('div', { class: `toast ${kind}` }, message);
+  const hide = () => { t.style.transition = 'opacity .3s'; t.style.opacity = '0'; setTimeout(() => t.remove(), 300); };
+  const t = el('div', { class: `toast ${kind}`, title: '点击关闭', onclick: hide }, message);
   $('#toasts').append(t);
-  setTimeout(() => { t.style.transition = 'opacity .3s'; t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, ms);
+  // 页面在后台时（切到别的标签页 / 最小化）等切回来再开始计时，免得提示还没看到就消失了
+  if (!document.hidden) return void setTimeout(hide, ms);
+  const onVisible = () => {
+    if (document.hidden) return;
+    document.removeEventListener('visibilitychange', onVisible);
+    setTimeout(hide, ms);
+  };
+  document.addEventListener('visibilitychange', onVisible);
 }
 export const toastError = (e) => toast(errorText(e), 'error', 6000);
 
