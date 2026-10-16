@@ -533,9 +533,10 @@ AI 填写卡片里的两个开关（「联网检索（角色 / 画师）」「�
 - 识图与「识别角色 / 标签参考」并行；单张识图出错按 `retry.py` 自动重试，仍失败只提示，这张图按「看不到图」处理（用 `*_noimage.md`）；没有描述且全部失败时报错，不做正式填写。
 - 识图结果按「图片 + 用途 + 模型与思考档 + 提示词内容」缓存在内存（最多 64 条，重启清空）：反复点「生成 / 修改」不重复识图，改了 vision/ 提示词会自动重新识图。
 - 识图模型下拉只列出能看图的模型；选过的模型被取消勾选或测出不能看图时自动回到「同上」。灵感图上传框、「看不到参考图」提示都按识图模型判断。
+- 识图模型下拉旁的「重新识图」（2026-10-16）：开启后下一次「生成 / 修改」不读缓存、全部图片重新识图，新结果替换缓存；只管这一次，成功后自动关闭（失败或取消时保持开启），不保存到表单。没有要识图的图片时不可点。
 - 卡片下方新增可折叠的「识图结果」，逐张显示识图原文、耗时或「缓存」、失败原因；日志 `llm_last_request.json` 记在 `recognition`。
 
-`/api/llm/fill` 新增可选参数 `vision_provider_id`、`vision_model_id`（不传 = 同上），响应新增 `recognition: {model, items: [{label, kind, text, error, cached, elapsed}]}`。
+`/api/llm/fill` 新增可选参数 `vision_provider_id`、`vision_model_id`（不传 = 同上）、`vision_no_cache`（true = 这次不用识图缓存，日志 `recognition.no_cache`），响应新增 `recognition: {model, items: [{label, kind, text, error, cached, elapsed}]}`。
 
 ---
 

@@ -3,6 +3,7 @@
 
 每张图单独请求一次（并行），模型可以专心描述一张图的细节。
 同一张图 + 同一用途 + 同一模型与思考档 + 同一提示词的结果缓存在内存里（重启清空），反复点「生成 / 修改」不重复识图。
+页面「重新识图」可让某一次填写不读缓存、全部重新识图（新结果照常写进缓存）。
 """
 from __future__ import annotations
 
@@ -47,14 +48,14 @@ def _prompt_file(item: dict) -> str:
     return f"vision/{item['kind']}.md"
 
 
-def _one(p: dict, m: dict, level: str, item: dict, rid: str) -> dict:
+def _one(p: dict, m: dict, level: str, item: dict, rid: str, use_cache: bool) -> dict:
     out = {**item, "text": "", "error": None, "cached": False, "elapsed": 0.0}
     system = _read("vision/system.md") + "\n\n" + _read(_prompt_file(item))
     user = _read("vision/user.md")
     key = hashlib.sha1(json.dumps([item["hash"], item["kind"], p["id"], m["id"], level, system, user],
                                   ensure_ascii=False).encode("utf-8")).hexdigest()
     with _lock:
-        if key in _cache:
+        if use_cache and key in _cache:
             _cache.move_to_end(key)
             return {**out, "text": _cache[key], "cached": True}
     try:
@@ -72,20 +73,23 @@ def _one(p: dict, m: dict, level: str, item: dict, rid: str) -> dict:
         return {**out, "error": str(e), "retries": log.get("retries"), "elapsed": round(time.time() - t0, 2)}
     with _lock:
         _cache[key] = raw["text"]
+        _cache.move_to_end(key)
         while len(_cache) > CACHE_SIZE:
             _cache.popitem(last=False)
     return {**out, "text": raw["text"], "elapsed": round(time.time() - t0, 2), "retries": log.get("retries"),
             "level": res["level"], "level_note": log.get("level_note")}
 
 
-def describe(p: dict, m: dict, level: str, items: list[dict], request_id: str = "") -> list[dict]:
+def describe(p: dict, m: dict, level: str, items: list[dict], request_id: str = "",
+             use_cache: bool = True) -> list[dict]:
     """items: [{"kind": inspiration|character|pose, "label", "hash", "input_type"(动作参考)}]。
 
     返回同顺序的结果，每项加上 text（失败为 ""）、error、cached、elapsed、size、retries，
     以及实际使用的思考档 level、档位被自动改掉时的提示 level_note。
+    use_cache=False：不读缓存，全部重新识图（新结果仍写进缓存，覆盖旧的）。
     单张失败不影响其它；取消时由调用方检查 retry.is_cancelled。
     """
     if not items:
         return []
     with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(items))) as ex:
-        return list(ex.map(lambda it: _one(p, m, level, it, request_id), items))
+        return list(ex.map(lambda it: _one(p, m, level, it, request_id, use_cache), items))

@@ -99,6 +99,7 @@ def _fill(req: dict, rid: str) -> dict:
         vlevels = (vm.get("thinking") or {}).get("levels") or ["off"]
         vlevel = vm.get("level") if vm.get("level") in vlevels else vlevels[0]
     vision = vm.get("vision") is True
+    vision_fresh = bool(req.get("vision_no_cache"))    # 页面「重新识图」：这一次不用识图缓存
     current = req.get("current_fields") or {}
     presets = load_json("defaults.json")["aspect_presets"]
     labels = json.loads((config.PROMPTS_DIR / "fill" / "user" / "labels.json").read_text(encoding="utf-8"))
@@ -133,7 +134,7 @@ def _fill(req: dict, rid: str) -> dict:
     elif user_imgs:
         warnings.append("当前识图模型不支持图片，灵感参考图未发送")
     v_ex = ThreadPoolExecutor(max_workers=1)
-    v_fut = v_ex.submit(describe_images, vp, vm, vlevel, v_items, rid) if v_items else None
+    v_fut = v_ex.submit(describe_images, vp, vm, vlevel, v_items, rid, not vision_fresh) if v_items else None
     v_ex.shutdown(wait=False)
 
     # —— 人设匹配（可关）：描述里出现人设的名称 / 别名，或在绘图页选用了人设；本地完成，不联网、不调用 LLM ——
@@ -258,7 +259,7 @@ def _fill(req: dict, rid: str) -> dict:
                  "vision": vision, "sections": sections, "images": img_log, "system": system,
                  "references": [b for b in blocks if b], "user_text": parts[-1]["text"],
                  "research": research_log or None,
-                 "recognition": {"provider": vp["name"], "model": vm["id"], "level": vlevel,
+                 "recognition": {"provider": vp["name"], "model": vm["id"], "level": vlevel, "no_cache": vision_fresh,
                                  "results": [{k: r.get(k) for k in ("label", "kind", "size", "cached", "elapsed",
                                                                      "error", "retries", "text")} for r in v_res]}
                  if v_res else None}

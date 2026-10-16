@@ -45,9 +45,12 @@
         <div class="llm-images-row">
           <div class="dz-wrap" id="llm-images"></div>
           <div class="llm-img-side">
-            <label class="llm-vision" title="上传的图片（灵感图、已开启的人物 / 动作参考图）先由这个模型逐张详细描述，再把描述交给上面的模型生成提示词；生成用的模型不必能看图">
-              <span>识图模型</span><select id="llm-vision-model"></select>
-            </label>
+            <div class="llm-vision-row">
+              <label class="llm-vision" title="上传的图片（灵感图、已开启的人物 / 动作参考图）先由这个模型逐张详细描述，再把描述交给上面的模型生成提示词；生成用的模型不必能看图">
+                <span>识图模型</span><select id="llm-vision-model"></select>
+              </label>
+              <button class="btn ghost small toggle" id="llm-vision-fresh" type="button" aria-pressed="false">重新识图</button>
+            </div>
             <div class="llm-img-note muted" id="llm-img-note"></div>
           </div>
         </div>

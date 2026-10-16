@@ -194,6 +194,8 @@ input.out { border-color: color-mix(in srgb, var(--warn) 60%, var(--border)); }
 .llm-vision > span { white-space: nowrap; }
 .llm-vision select { width: auto; max-width: 280px; min-width: 0; padding: 4px 8px; font-size: 12.5px; }
 .llm-img-note { font-size: 12px; }
+.llm-vision-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn.toggle.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
 .gen-bar { position: sticky; bottom: 0; padding: 10px 0 16px; background: linear-gradient(transparent, var(--bg) 30%); margin-top: auto; }
 
