@@ -1,6 +1,6 @@
 // 人设详情左栏：封面与预览图、生成预览（只在人设页管理，不进历史 / 收藏）。
 import { api, errorText, uploadRef } from './api.js';
-import { $, el, fill, toast, toastError, confirmDialog, modal, lightbox, fmtTime } from './ui.js';
+import { $, el, fill, toast, toastError, confirmDialog, modal, lightbox, fmtTime, dragScroll } from './ui.js';
 import { app, modelInfo, refHashesInUse, FIELD_NAMES } from './store.js';
 import { reuseDialog } from './records.js';
 import { joinTags, coverUrl, atArtist } from './persona.js';
@@ -60,6 +60,7 @@ export function createSide(ctx) {
     const d = ss.dom = {};
     d.viewer = el('div', { class: 'pv-viewer', tabindex: 0, title: '点击查看大图；可把图片拖到这里或粘贴设为封面' });
     d.strip = el('div', { class: 'pv-strip' });
+    dragScroll(d.strip);
     d.actions = el('div', { class: 'pv-actions' });
     d.meta = el('div', { class: 'pv-meta' });
     d.job = el('div', { class: 'pv-job' });

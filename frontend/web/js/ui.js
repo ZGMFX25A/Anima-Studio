@@ -187,6 +187,39 @@ export async function copyText(text) {
   catch { toast('复制失败', 'error'); }
 }
 
+// 横向缩略图条：按住左键左右拖动来滚动（图多时）；拖动过就不算点击，松手不会选中图片
+export function dragScroll(box) {
+  let drag = null;
+  box.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'mouse' || e.button !== 0 || box.scrollWidth <= box.clientWidth) return;
+    drag = { id: e.pointerId, x: e.clientX, left: box.scrollLeft, moved: false };
+  });
+  box.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x;
+    if (!drag.moved) {
+      if (Math.abs(dx) < 5) return;
+      drag.moved = true;
+      box.setPointerCapture(e.pointerId);
+      box.classList.add('dragging');
+    }
+    box.scrollLeft = drag.left - dx;
+  });
+  const end = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    if (drag.moved) {
+      box.classList.remove('dragging');
+      const eat = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+      box.addEventListener('click', eat, true);    // 紧跟着的 click 在同一轮事件里派发，之后就移除
+      setTimeout(() => box.removeEventListener('click', eat, true));
+    }
+    drag = null;
+  };
+  box.addEventListener('pointerup', end);
+  box.addEventListener('pointercancel', end);
+  box.addEventListener('dragstart', (e) => e.preventDefault());   // 不让浏览器把缩略图当图片拖走
+}
+
 // 用子节点替换内容；忽略 null / undefined / false（原生 replaceChildren 会把它们显示成文字）
 export function fill(node, ...kids) {
   node.replaceChildren(...kids.flat().filter(k => k !== null && k !== undefined && k !== false));

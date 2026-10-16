@@ -84,7 +84,7 @@
 .pv-viewer .lb-prev { left: 8px; }
 .pv-viewer .lb-next { right: 8px; }
 .pv-badge { position: absolute; top: 8px; left: 8px; font-size: 12px; padding: 2px 9px; border-radius: 999px; background: rgba(0, 0, 0, .5); color: #ffd36b; }
-.pv-strip { display: flex; gap: 6px; overflow-x: auto; flex: none; }
+.pv-strip { display: flex; gap: 6px; overflow: auto hidden; flex: none; }
 .pv-strip:empty { display: none; }
 .pv-strip .strip-item { width: 52px; height: 52px; }
 .pv-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
