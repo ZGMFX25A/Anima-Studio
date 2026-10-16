@@ -188,13 +188,36 @@ export async function copyText(text) {
 }
 
 // 横向缩略图条：随时可按住左键左右拖动。内容超出时拖动 = 滚动；没超出时缩略图跟着走（有阻尼），松手弹回。
-// 拖动过就不算点击，松手不会选中图片
+// 拖动过就不算点击，松手不会选中图片。内容超出时鼠标放在上面转滚轮也能左右滚动（不再滚动整页）
 export function dragScroll(box) {
   let drag = null;
   let springTimer = 0;
+  let wheelTarget = null;
+  let wheelRaf = 0;
   const setOffset = (px) => box.style.setProperty('--drag-x', `${px}px`);
+  const stopWheel = () => { cancelAnimationFrame(wheelRaf); wheelRaf = 0; wheelTarget = null; };
+  box.addEventListener('wheel', (e) => {
+    const max = box.scrollWidth - box.clientWidth;
+    // 横向的触控板滑动、Shift+滚轮浏览器本来就会横向滚；Ctrl+滚轮是缩放
+    if (max <= 1 || e.ctrlKey || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? box.clientWidth : 1;
+    wheelTarget = Math.max(0, Math.min(max, (wheelTarget ?? box.scrollLeft) + e.deltaY * unit));
+    if (!wheelRaf) {
+      const step = () => {    // 缓动到目标位置，连续转动时目标累加
+        const before = box.scrollLeft;
+        const diff = wheelTarget - before;
+        if (Math.abs(diff) >= 2) box.scrollLeft = before + diff * 0.3;
+        // 到了，或者步子太小被取整吃掉（滚动位置按设备像素取整）：直接到位
+        if (Math.abs(diff) < 2 || box.scrollLeft === before) { box.scrollLeft = wheelTarget; stopWheel(); return; }
+        wheelRaf = requestAnimationFrame(step);
+      };
+      wheelRaf = requestAnimationFrame(step);
+    }
+  }, { passive: false });
   box.addEventListener('pointerdown', (e) => {
     if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    stopWheel();
     clearTimeout(springTimer);
     box.classList.remove('spring', 'elastic');
     setOffset(0);
