@@ -87,6 +87,7 @@
 .pv-strip { display: flex; gap: 6px; overflow: auto hidden; flex: none; }
 .pv-strip:empty { display: none; }
 .pv-strip .strip-item { width: 52px; height: 52px; }
+.pv-strip .strip-item:has(> img) { width: auto; }
 .pv-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .pv-actions:empty { display: none; }
 .pv-cur { font-size: 12.5px; color: #e9b949; padding: 0 4px; }

@@ -187,12 +187,19 @@ export async function copyText(text) {
   catch { toast('复制失败', 'error'); }
 }
 
-// 横向缩略图条：按住左键左右拖动来滚动（图多时）；拖动过就不算点击，松手不会选中图片
+// 横向缩略图条：随时可按住左键左右拖动。内容超出时拖动 = 滚动；没超出时缩略图跟着走（有阻尼），松手弹回。
+// 拖动过就不算点击，松手不会选中图片
 export function dragScroll(box) {
   let drag = null;
+  let springTimer = 0;
+  const setOffset = (px) => box.style.setProperty('--drag-x', `${px}px`);
   box.addEventListener('pointerdown', (e) => {
-    if (e.pointerType !== 'mouse' || e.button !== 0 || box.scrollWidth <= box.clientWidth) return;
-    drag = { id: e.pointerId, x: e.clientX, left: box.scrollLeft, moved: false };
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    clearTimeout(springTimer);
+    box.classList.remove('spring', 'elastic');
+    setOffset(0);
+    drag = { id: e.pointerId, x: e.clientX, left: box.scrollLeft, moved: false,
+      free: box.scrollWidth - box.clientWidth <= 1 };
   });
   box.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.id) return;
@@ -202,13 +209,20 @@ export function dragScroll(box) {
       drag.moved = true;
       box.setPointerCapture(e.pointerId);
       box.classList.add('dragging');
+      if (drag.free) box.classList.add('elastic');
     }
-    box.scrollLeft = drag.left - dx;
+    if (drag.free) setOffset(dx / (1 + Math.abs(dx) / 150));   // 越拖越沉，最多约 150px
+    else box.scrollLeft = drag.left - dx;
   });
   const end = (e) => {
     if (!drag || e.pointerId !== drag.id) return;
     if (drag.moved) {
       box.classList.remove('dragging');
+      if (drag.free) {
+        box.classList.add('spring');
+        setOffset(0);
+        springTimer = setTimeout(() => box.classList.remove('spring', 'elastic'), 300);
+      }
       const eat = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
       box.addEventListener('click', eat, true);    // 紧跟着的 click 在同一轮事件里派发，之后就移除
       setTimeout(() => box.removeEventListener('click', eat, true));
