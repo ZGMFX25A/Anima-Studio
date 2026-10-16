@@ -1,6 +1,6 @@
 // 绘图页：模型与采样、提示词字段、参考、高级、生成与预览。
 import { api, errorText } from './api.js';
-import { $, $$, el, fill, toast, toastError, dropzone, lightbox, confirmDialog, fmtDuration } from './ui.js';
+import { $, $$, el, fill, toast, toastError, dropzone, lightbox, confirmDialog, fmtDuration, dragScroll } from './ui.js';
 import { app, bindAll, syncAll, setField, saveForm, on, emit, modelInfo, refHashesInUse } from './store.js';
 import { showPromptModal, reuseDialog } from './records.js';
 
@@ -21,6 +21,7 @@ export function initDraw() {
   fillSamplerOptions();
 
   bindAll($('#page-draw'));
+  dragScroll($('#strip'));
   segmented($('#seed-mode'), () => app.form.seed_mode, (v) => {
     setField('seed_mode', v);
     if (v === 'locked' && app.form.seed == null && currentSeed() != null) setField('seed', currentSeed());

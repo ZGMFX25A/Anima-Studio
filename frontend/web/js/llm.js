@@ -9,6 +9,7 @@ let imgZone;
 let undoSnapshot = null;
 let controller = null;
 let lastResult = '';      // 上次调用的结果说明，下次调用前一直显示
+let freshVision = false;  // 「重新识图」：只管下一次生成 / 修改，不读识图缓存；成功后自动关闭
 
 export function initLlm() {
   const card = $('#ai-card');
@@ -33,6 +34,7 @@ export function initLlm() {
     refresh();
   });
   $('#llm-vision-model').addEventListener('change', (e) => { app.form.llm.vision_key = e.target.value; saveForm(); refresh(); });
+  $('#llm-vision-fresh').addEventListener('click', () => { freshVision = !freshVision; refresh(); });
   $('#llm-level').addEventListener('change', (e) => { app.form.llm.level = e.target.value; saveForm(); });
   $('#llm-generate').addEventListener('click', () => run('generate'));
   $('#llm-modify').addEventListener('click', () => run('modify'));
@@ -138,10 +140,26 @@ function refresh() {
     $('#llm-status').textContent = lastResult || (refsSent ? '已开启的参考图会先识图，再作为参考交给生成' : '');
   }
   fill($('#llm-hints'), ...hints.map(t => el('div', { class: 'hint warn' }, t)));
+  const fresh = $('#llm-vision-fresh');
+  const canFresh = !!m && vision === true && !!recognizeCount();
+  fresh.disabled = !canFresh || !!controller;
+  fresh.classList.toggle('on', freshVision && canFresh);
+  fresh.setAttribute('aria-pressed', String(freshVision && canFresh));
+  fresh.title = !canFresh ? '没有要识图的图片（灵感图、已开启的人物 / 动作参考图）'
+    : freshVision ? '已开启：下一次生成 / 修改不用识图缓存，全部图片重新识图；成功后自动关闭。再点一下取消'
+    : '下一次生成 / 修改不用识图缓存，全部图片重新识图（新结果会替换缓存）；成功后自动关闭';
   renderPersonaLink();
   const disabled = !m || !!controller;
   $('#llm-generate').disabled = disabled;
   $('#llm-modify').disabled = disabled;
+}
+
+// 这次填写要识图的图片张数（灵感图 + 已开启的人物 / 动作参考图），与后端的取法一致
+function recognizeCount() {
+  const f = app.form;
+  return f.llm.images.filter(Boolean).slice(0, 3).length
+    + (f.character_ref.enabled ? f.character_ref.images.filter(Boolean).slice(0, 3).length : 0)
+    + (f.pose_ref.enabled && f.pose_ref.image ? 1 : 0);
 }
 
 function snapshot() {
@@ -165,9 +183,9 @@ async function run(mode) {
   refresh();
   const t0 = Date.now();
   // 识图与识别角色同时进行
-  const recognize = canSee && (images.length || (f.character_ref.enabled && f.character_ref.images.length)
-    || (f.pose_ref.enabled && f.pose_ref.image));
-  const first = [recognize && '识图', f.llm.web_character && '识别角色'].filter(Boolean).join(' + ');
+  const recognize = canSee && recognizeCount() > 0;
+  const fresh = recognize && freshVision;
+  const first = [recognize && (fresh ? '重新识图' : '识图'), f.llm.web_character && '识别角色'].filter(Boolean).join(' + ');
   const stages = [first, (f.llm.web_character || f.llm.tag_reference) && '检索', '生成'].filter(Boolean);
   const tick = setInterval(() => { $('#llm-status').textContent = `${stages.join(' → ')}中… ${Math.round((Date.now() - t0) / 1000)}s`; }, 500);
   // 后端出错会自动重试（最多 2 次，共 3 次请求）；取消时也通知后端，在下一次重试前停下
@@ -182,6 +200,7 @@ async function run(mode) {
       mode, request_id: requestId, provider_id: m.provider_id, model_id: m.model_id, level: f.llm.level, safety: f.llm.safety,
       description: f.llm.description, user_images: images,
       ...(vm && vm !== m ? { vision_provider_id: vm.provider_id, vision_model_id: vm.model_id } : {}),
+      ...(fresh ? { vision_no_cache: true } : {}),
       current_fields: { ...f.fields, aspect_ratio: f.aspect_ratio },
       character: { enabled: f.character_ref.enabled, images: f.character_ref.images },
       pose: { enabled: f.pose_ref.enabled, image: f.pose_ref.image, input_type: f.pose_ref.input_type },
@@ -193,6 +212,7 @@ async function run(mode) {
     renderRecognition(res.recognition);
     renderResearch(res.research);
     lastResult = `完成（${res.elapsed.toFixed(1)}s）`;
+    if (fresh) freshVision = false;
     for (const w of res.warnings || []) toast(w, 'warn', 6000);
   } catch (e) {
     if (e.name === 'AbortError') lastResult = '已取消';
