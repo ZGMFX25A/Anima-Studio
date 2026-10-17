@@ -525,9 +525,14 @@ class OutfitLibrary(Library):
             return {r["series_tag"]: json.loads(r["names"]) for r in c.execute("SELECT series_tag, names FROM series_names")}
 
     def set_series_names(self, series: str, names: list[str]) -> None:
+        """作品中文名与简称（第一个是显示用的）；清空时删掉这一条（「用 AI 起中文名」会重新起）。"""
+        names = list(dict.fromkeys(n.strip() for n in names if n and n.strip()))
         with _lock, _conn() as c:
-            c.execute("INSERT OR REPLACE INTO series_names (series_tag, names, updated_at) VALUES (?,?,?)",
-                      (series, json.dumps(names, ensure_ascii=False), time.time()))
+            if names:
+                c.execute("INSERT OR REPLACE INTO series_names (series_tag, names, updated_at) VALUES (?,?,?)",
+                          (series, json.dumps(names, ensure_ascii=False), time.time()))
+            else:
+                c.execute("DELETE FROM series_names WHERE series_tag = ?", (series,))
 
     def update_catalog_item(self, series: str, tag: str, fields: dict) -> None:
         with _lock, _conn() as c:

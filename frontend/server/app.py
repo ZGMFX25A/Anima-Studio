@@ -475,7 +475,14 @@ def _profile(kind: str, tag: str, post_count=None):
 @app.get("/api/library/{kind}")
 def library_list(kind: str, q: str = "", offset: int = 0, limit: int = 50):
     lib = _lib(kind)
-    return lib.search(q, max(0, offset), min(max(1, limit), 200)) if lib else err(404, "NOT_FOUND", "未知资料库")
+    if not lib:
+        return err(404, "NOT_FOUND", "未知资料库")
+    d = lib.search(q, max(0, offset), min(max(1, limit), 200))
+    if kind == "outfits":      # 列表的「作品」一栏显示作品中文名
+        sn = OUTFITS.series_names()
+        for r in d["items"]:
+            r["series_names"] = sn.get(r["series_tag"], [])
+    return d
 
 
 def _detail(kind: str, r: dict | None):
@@ -483,6 +490,7 @@ def _detail(kind: str, r: dict | None):
     if r and kind == "characters":
         r["variant_busy"] = variant_cache.busy(r["tag"])
     if r and kind == "outfits":
+        r["series_names"] = OUTFITS.series_names().get(r["series_tag"], []) if r["series_tag"] else []
         rows = {m["tag"]: CHARACTERS.get_by_tag(m["tag"]) for m in r["members"]}
         r["members"] = [{**m, "id": rows[m["tag"]]["id"] if rows[m["tag"]] else None,
                          "name": rows[m["tag"]]["name"] if rows[m["tag"]] else ""} for m in r["members"]]
@@ -679,7 +687,12 @@ def library_update(kind: str, rid: int, data: dict = Body(...)):
         r = lib.update(rid, data)
     except ValueError as e:
         return err(422, "INVALID", str(e))
-    return r if r else err(404, "NOT_FOUND", "条目不存在")
+    if not r:
+        return err(404, "NOT_FOUND", "条目不存在")
+    # 服装：作品中文名与简称（同一作品的服装共用，手改了 AI 不会再覆盖）
+    if kind == "outfits" and isinstance(data.get("series_names"), list) and r["series_tag"]:
+        OUTFITS.set_series_names(r["series_tag"], [str(n)[:20] for n in data["series_names"][:10]])
+    return _detail(kind, r)
 
 
 @app.post("/api/library/{kind}/{rid}/refresh")

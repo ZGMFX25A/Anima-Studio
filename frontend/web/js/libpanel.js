@@ -67,7 +67,7 @@ function variantLabel(v, b) {
 
 // 编辑页内容快照：判断有没有没保存的修改（标签输入框显示空格写法，比较时统一成下划线）
 const snapOf = (c) => JSON.stringify([c.name, (c.tag || '').replace(/ /g, '_'), (c.series_tag || '').replace(/ /g, '_'),
-  c.names, c.appearance, c.notes || '', c.wiki || '']);
+  c.names, c.appearance, c.notes || '', c.wiki || '', c.series_names || []]);
 
 export function createLibrary(kind) {
   const cfg = LIB_CONFIG[kind];
@@ -235,7 +235,7 @@ export function createLibrary(kind) {
           el('div', { class: 'cname-line' }, isVar ? el('span', { class: 'vmark' }, '└') : null, el('span', { class: 'cname-text' }, c.name), fold),
           el('small', {}, c.names.filter(x => x !== c.name).slice(0, 4).join(' · '))),
         el('span', { class: 'mono' }, (cfg.full ? '' : '@') + sp(c.tag)),
-        cfg.full ? el('span', { class: 'muted' }, sp(c.series_tag) || '—') : null,
+        cfg.full ? el('span', { class: 'muted', title: sp(c.series_tag) }, c.series_names?.[0] || sp(c.series_tag) || '—') : null,
         el('span', { class: 'muted mono' }, c.post_count ? `${c.post_count} 张` : '—'),
         el('span', {},
           c.parent_tag ? el('span', { class: 'badge' }, '变体') : el('span', { class: 'badge' }, c.source === 'manual' ? '手动新增' : 'Danbooru'),
@@ -508,6 +508,15 @@ export function createLibrary(kind) {
         v.split(/[,，]/).map(x => x.trim()).filter(Boolean).forEach(x => { if (!c.names.includes(x)) c.names.push(x); });
         drawEditor();
       });
+    // 服装：作品中文名与简称（同一作品的服装共用；第一个是显示用的）。AI 起错了在这里改，改过的 AI 不会再覆盖
+    const snBox = cfg.members && !isNew ? chipEditor(c.series_names || [], n => n,
+      (i) => { sync(); c.series_names.splice(i, 1); drawEditor(); },
+      c.series_tag ? '添加作品中文名或简称后回车，如 碧蓝档案、BA' : '先填作品标签并保存', (v) => {
+        sync();
+        c.series_names = c.series_names || [];
+        v.split(/[,，、]/).map(x => x.trim()).filter(Boolean).forEach(x => { if (!c.series_names.includes(x)) c.series_names.push(x); });
+        drawEditor();
+      }) : null;
     const appBox = cfg.full ? chipEditor(c.appearance,
       a => [sp(a.tag), a.freq != null ? el('em', {}, ` ${Math.round(a.freq * 100)}%`) : el('em', {}, ' 手动')],
       (i) => { sync(); c.appearance.splice(i, 1); drawEditor(); },
@@ -522,6 +531,7 @@ export function createLibrary(kind) {
       sync();
       const body = { name: c.name, tag: c.tag, names: c.names, notes: c.notes };
       if (cfg.full) Object.assign(body, { series_tag: c.series_tag, appearance: c.appearance, wiki: c.wiki });
+      if (snBox) body.series_names = c.series_names || [];
       try {
         saved(isNew ? await api.post(base, body) : await api.put(`${base}/${c.id}`, body));
         toast('已保存', 'ok');
@@ -581,6 +591,7 @@ export function createLibrary(kind) {
           field(cfg.tagLabel, 'tag', tag, cfg.tagHint),
           cfg.full ? field('作品标签', 'series_tag', series, '写进 series') : null),
         cfg.variants && !isNew && !c.parent_tag ? field('造型变体', null, variantBox(c), `Danbooru 为这个角色的服装 / 形态单独建的标签；图片 ${MIN_POSTS} 张以上的会自动存入角色库`) : null,
+        snBox ? field('作品中文名', null, snBox, `这个作品${c.series_tag ? `（${sp(c.series_tag)}）` : ''}的所有服装共用，第一个用来显示；绘图页服装检索栏按作品搜索用。AI 起错了在这里改，改过的不会被 AI 覆盖`) : null,
         cfg.members && !isNew ? field('常穿的角色', null, membersBox(c), '百分比 = 这套服装的图片里出现这个角色的比例；「wiki」= Danbooru 简介里提到的') : null,
         field('名称映射', null, namesBox, cfg.members ? '描述里写了这些名字，就认成这套服装（只在同一作品的角色身上认）' : `这些名字都会对应到这个${cfg.noun}`),
         cfg.full ? field(cfg.members ? '常见标签' : '外貌标签', 'appearance', appBox, cfg.appHint) : null,
