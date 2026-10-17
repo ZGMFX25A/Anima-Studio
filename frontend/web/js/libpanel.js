@@ -31,6 +31,27 @@ export const LIB_CONFIG = {
 
 const MIN_POSTS = 20;    // 与 server/web/variant_cache.py 一致：图片太少的变体不自动缓存
 const VAR_VIEW_KEY = 'anima.library.variantView';
+const FAMILY_ALL_KEY = 'anima.library.familyAll';
+
+// aris_(maid)_(blue_archive) 相对 aris_(blue_archive) → maid（与 server/web/danbooru.py 的 qualifier 一致）
+function qualifier(vtag, btag) {
+  const m = btag.match(/^(.+?)_(\([^()]+\))$/);
+  const stem = m ? m[1] : btag;
+  const rest = vtag.startsWith(stem) ? vtag.slice(stem.length) : vtag;
+  let qs = [...rest.matchAll(/\(([^()]+)\)/g)].map(x => x[1]);
+  if (m && qs.length > 1) qs = qs.slice(0, -1);
+  return (qs.join(' ') || vtag).replace(/_/g, ' ');
+}
+
+// 变体在切换标签上的短名：名字是「本体名(女仆)」时取括号里的，否则取标签里多出的括号
+function variantLabel(v, b) {
+  const m = v.name.match(/^(.*?)\s*[（(]([^()（）]+)[)）]$/);
+  return m && b.name && m[1].trim() === b.name.trim() ? m[2] : qualifier(v.tag, b.tag);
+}
+
+// 编辑页内容快照：判断有没有没保存的修改（标签输入框显示空格写法，比较时统一成下划线）
+const snapOf = (c) => JSON.stringify([c.name, (c.tag || '').replace(/ /g, '_'), (c.series_tag || '').replace(/ /g, '_'),
+  c.names, c.appearance, c.notes || '', c.wiki || '']);
 
 export function createLibrary(kind) {
   const cfg = LIB_CONFIG[kind];
@@ -39,8 +60,11 @@ export function createLibrary(kind) {
   // varView：列表里变体的展开方式 menu（下拉菜单）/ inline（在本体下面逐行列出）；open：inline 时已展开的本体，默认全部折叠
   const st = { q: '', items: [], total: 0, variantTotal: 0, view: 'list', edit: null, timer: null,
     addMode: 'direct', fz: { name: '', series: '', res: null, busy: false },
-    varView: 'menu', open: new Set(), menu: null };
+    varView: 'menu', open: new Set(), menu: null,
+    // 详情页：family = 本体 + 已缓存的变体（顶部切换标签）；familyAll = 显示全部（本体与变体从上到下排开）；snap / syncEdit 判断未保存的修改
+    family: null, familyAll: false, snap: '', syncEdit: null, famToken: null };
   try { if (localStorage.getItem(VAR_VIEW_KEY) === 'inline') st.varView = 'inline'; } catch { /* 忽略 */ }
+  try { st.familyAll = localStorage.getItem(FAMILY_ALL_KEY) === '1'; } catch { /* 忽略 */ }
   on(cfg.openEvent, (id) => openEditor(id));
 
   async function render() {
@@ -170,7 +194,7 @@ export function createLibrary(kind) {
       row.classList.add('busy');
       try {
         const r = await api.post(`${base}/import`, { tag: c.tag, name: st.fz.name });
-        toast(`已加入：${r.name} → ${sp(r.tag)}${r.parent_tag || !r.variants_at ? '，本体和造型变体正在后台补齐' : ''}`, 'ok', 5000);
+        toast(`已加入：${r.name} → ${sp(r.tag)}${r.parent_tag || !r.variants_at ? '，本体和造型变体正在后台存入' : ''}`, 'ok', 5000);
         openEditor(r.id);
       } catch (e) { toastError(e); row.classList.remove('busy'); }
     };
@@ -181,7 +205,7 @@ export function createLibrary(kind) {
       const hitInside = st.q && fam?.vars.some(v => v.hit);
       // 本体名字旁的折叠按钮：下拉菜单方式弹出菜单，列表方式在下面展开 / 收起
       const fold = n ? el('button', {
-        class: `vfold${open ? ' open' : ''}${hitInside ? ' hit' : ''}`, title: hitInside ? '有变体命中搜索' : '',
+        class: `vfold${open ? ' open' : ''}${hitInside ? ' hit' : ''}`, title: hitInside ? '有变体符合搜索' : '',
         onclick: (e) => {
           e.stopPropagation();
           if (st.varView === 'menu') return openMenu(e.currentTarget, fam);
@@ -204,10 +228,10 @@ export function createLibrary(kind) {
       ...(st.varView === 'inline' && st.open.has(f.base.tag) ? f.vars.map(v => row(v, null, true)) : [])]);
     const withVars = fams.filter(f => f.vars.length);
     const allOpen = withVars.length && withVars.every(f => st.open.has(f.base.tag));
-    // 变体默认折叠；展开方式：下拉菜单 / 在本体下面逐行展开（可一键全部展开）
+    // 变体默认折叠；显示方式：下拉菜单 / 在列表中展开（可一键全部展开）
     const varTools = cfg.full && withVars.length ? [
-      el('span', { class: 'muted small' }, '变体展开方式'),
-      el('div', { class: 'seg small' }, [['menu', '下拉菜单', '点「N 个变体」弹出菜单'], ['inline', '逐行展开', '点「N 个变体」在本体下面逐行列出']]
+      el('span', { class: 'muted small' }, '变体显示方式'),
+      el('div', { class: 'seg small' }, [['menu', '下拉菜单', '点「N 个变体」弹出下拉菜单'], ['inline', '在列表中展开', '点「N 个变体」在本体下面展开']]
         .map(([k, label, title]) => el('button', { class: st.varView === k ? 'on' : '', title, onclick: () => setVarView(k) }, label))),
       st.varView === 'inline' ? el('button', { class: 'btn small ghost', onclick: () => {
         st.open = allOpen ? new Set() : new Set(withVars.map(f => f.base.tag));
@@ -273,22 +297,24 @@ export function createLibrary(kind) {
       fill(box,
         el('div', { class: 'vlist-head muted small' },
           c._listBusy ? '正在获取变体列表…'
-            : c.variants_at ? `${all.length} 个变体，已缓存 ${nCached} 个 · 列表获取于 ${fmtTime(c.variants_at)}` : '还没获取变体列表',
-          c.variant_busy ? ' · 后台缓存中…' : '',
+            : c.variants_at ? `${all.length} 个变体，${nCached} 个已存入角色库 · 列表更新于 ${fmtTime(c.variants_at)}` : '还没获取变体列表',
+          c.variant_busy ? ' · 正在后台存入…' : '',
           el('span', { class: 'grow' }),
           c._listBusy ? null : el('button', { class: 'btn small ghost', onclick: fetchList, title: '从 Danbooru 重新获取变体列表，新出的变体会补进来' },
-            c.variants_at ? '刷新列表' : '获取列表')),
+            c.variants_at ? '更新列表' : '获取变体列表')),
         all.length ? all.map(v => {
           const r = rows.get(v.tag);
-          const why = v.removed ? '删除过，不会自动取回' : v.post_count < MIN_POSTS ? `不到 ${MIN_POSTS} 张，未自动缓存` : c.variant_busy ? '后台缓存中…' : '未缓存';
+          const [why, tip] = v.removed ? ['删除过', '单独删除过，不会自动存回来；需要时点「存入」']
+            : v.post_count < MIN_POSTS ? [`图片少于 ${MIN_POSTS} 张`, `图片少于 ${MIN_POSTS} 张的变体共现标签不准，不自动存入；需要时点「存入」`]
+              : c.variant_busy ? ['正在后台存入…', ''] : ['还没存入', ''];
           return el('div', { class: 'vrow' },
             r ? el('a', { class: 'vrow-name', href: '#', onclick: (e) => { e.preventDefault(); openEditor(r.id); } }, r.name,
               el('small', { class: 'mono' }, sp(v.tag)))
               : el('span', { class: 'vrow-name mono' }, sp(v.tag)),
             el('span', { class: 'muted mono' }, `${v.post_count} 张`),
-            r ? el('span', {}, el('span', { class: 'badge ok small-badge' }, '已缓存'))
-              : el('span', { class: 'vrow-state' }, el('span', { class: 'muted' }, why),
-                el('button', { class: 'btn small ghost', onclick: (e) => fetchOne(v.tag, e.currentTarget) }, '获取')));
+            r ? el('span', {}, el('span', { class: 'badge ok small-badge' }, '已存入'))
+              : el('span', { class: 'vrow-state', title: tip }, el('span', { class: 'muted' }, why),
+                el('button', { class: 'btn small ghost', onclick: (e) => fetchOne(v.tag, e.currentTarget) }, '存入')));
         }) : c.variants_at ? el('div', { class: 'muted small' }, '这个角色在 Danbooru 上没有造型变体') : null);
       clearTimeout(c._poll);
       if (c.variant_busy) c._poll = setTimeout(poll, 2500);
@@ -306,7 +332,7 @@ export function createLibrary(kind) {
       draw();
     };
     const fetchOne = async (tag, btn) => {
-      btn.textContent = '获取中…';
+      btn.textContent = '存入中…';
       btn.disabled = true;
       try { merge(await api.post(`${base}/${c.id}/variants/fetch`, { tag })); toast(`已存入角色库：${sp(tag)}`, 'ok'); }
       catch (e) { toastError(e); }
@@ -321,16 +347,109 @@ export function createLibrary(kind) {
   async function openEditor(id) {
     closeMenu();
     st.view = 'edit';
+    st.family = null;
     if (id === 'new') {
       st.edit = { id: null, name: '', tag: '', series_tag: '', names: [], appearance: [], notes: '', wiki: '', other_names: [],
         source: 'manual', edited: [], post_count: 0 };
     } else {
       try { st.edit = await api.get(`${base}/${id}`); } catch (e) { toastError(e); st.view = 'list'; return; }
+      if (cfg.full) st.family = await loadFamily(st.edit);
     }
+    st.snap = snapOf(st.edit);
     drawEditor();
   }
 
+  // 本体 + 已缓存的变体（详情页顶部的切换标签、「显示全部」用）；没有变体时为 null
+  async function loadFamily(c) {
+    let b = c;
+    if (c.parent?.id) { try { b = await api.get(`${base}/${c.parent.id}`); } catch { return null; } }
+    else if (c.parent_tag) return null;     // 本体还没存进角色库
+    const vars = b.variant_rows || [];
+    if (!vars.length) return null;
+    const head = { id: b.id, name: b.name, tag: b.tag, post_count: b.post_count };
+    return { base: head, members: [{ ...head, isBase: true }, ...vars.map(v => ({ ...v, isBase: false }))] };
+  }
+
+  const isDirty = () => { st.syncEdit?.(); return !!st.edit && st.snap !== snapOf(st.edit); };
+  const leaveEdit = async () => !isDirty() || confirmDialog('有未保存的修改', '切换后，刚才的修改会丢失。要继续吗？', '继续', true);
+  const backToList = () => { st.view = 'list'; load(); };
+
+  function setFamilyAll(v) {
+    st.familyAll = v;
+    try { localStorage.setItem(FAMILY_ALL_KEY, v ? '1' : '0'); } catch { /* 忽略 */ }
+  }
+
+  // 顶部：本体 / 各变体的切换标签 +「显示全部」开关
+  function familyBar() {
+    const f = st.family, c = st.edit;
+    if (!f) return null;
+    const root = $(cfg.root);
+    const pick = async (m) => {
+      if (st.familyAll) return root.querySelector(`.fam-card[data-id="${m.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (m.id !== c.id && await leaveEdit()) openEditor(m.id);
+    };
+    return el('div', { class: 'fam-bar' },
+      el('div', { class: 'fam-tabs' }, f.members.map(m => el('button', {
+        class: `fam-tab${m.isBase ? ' base' : ''}${!st.familyAll && m.id === c.id ? ' on' : ''}`,
+        title: `${m.name}\n${sp(m.tag)} · ${m.post_count} 张${st.familyAll ? '\n点击跳到这一项' : ''}`, onclick: () => pick(m) },
+      m.isBase ? `本体 · ${m.name}` : variantLabel(m, f.base)))),
+      el('label', { class: 'switch-row fam-all', title: '本体和所有已存入的变体从上到下一起显示，方便对比' },
+        el('input', { type: 'checkbox', checked: st.familyAll, onchange: (e) => {
+          st.syncEdit?.();     // 没保存的输入先记下，切回单个查看时还在
+          setFamilyAll(e.target.checked);
+          drawEditor();
+        } }),
+        el('span', { class: 'switch' }), el('span', {}, '显示全部')));
+  }
+
+  // 显示全部：本体与各变体的资料从上到下排开（只读，「编辑」回到单个查看）
+  async function drawFamilyAll() {
+    const f = st.family;
+    st.syncEdit = null;
+    const root = $(cfg.root);
+    const list = el('div', { class: 'fam-cards' }, el('div', { class: 'muted small' }, '读取中…'));
+    fill(root,
+      el('div', { class: 'panel-title' },
+        el('button', { class: 'btn ghost small', onclick: backToList }, '← 返回列表'),
+        el('h2', {}, f.base.name), el('span', { class: 'muted small' }, `本体与 ${f.members.length - 1} 个造型变体`)),
+      familyBar(),
+      el('div', { class: 'muted small' }, '变体里颜色淡的外貌标签本体也有（发色、光环这类），正常颜色的是这个变体特有的，多半是服装。'),
+      list);
+    const token = st.famToken = {};
+    const ds = await Promise.all(f.members.map(m => api.get(`${base}/${m.id}`).catch(() => null)));
+    if (st.famToken !== token || st.view !== 'edit' || !st.familyAll) return;
+    const baseTags = new Set((ds[0]?.appearance || []).map(a => a.tag));
+    fill(list, f.members.map((m, i) => familyCard(m, ds[i], baseTags)));
+    if (st.edit.id !== f.base.id) list.querySelector(`.fam-card[data-id="${st.edit.id}"]`)?.scrollIntoView({ block: 'start' });
+  }
+
+  function familyCard(m, d, baseTags) {
+    if (!d) return el('div', { class: 'fam-card muted' }, `${m.name}：读取失败`);
+    const edit = async () => {
+      setFamilyAll(false);
+      if (m.id === st.edit.id) return drawEditor();
+      if (await leaveEdit()) openEditor(m.id);
+      else { setFamilyAll(true); drawEditor(); }
+    };
+    const wiki = d.wiki ? el('div', { class: 'fam-wiki', title: '点击展开 / 收起', onclick: () => wiki.classList.toggle('open') }, d.wiki) : null;
+    return el('section', { class: `fam-card${m.id === st.edit.id ? ' current' : ''}`, 'data-id': m.id },
+      el('div', { class: 'fam-card-head' },
+        el('span', { class: `badge small-badge${m.isBase ? ' ok' : ''}` }, m.isBase ? '本体' : '变体'),
+        el('b', {}, d.name), el('span', { class: 'mono muted' }, sp(d.tag)), el('span', { class: 'muted small' }, `${d.post_count} 张`),
+        d.edited.length ? el('span', { class: 'badge warn small-badge', title: d.edited.map(k => FIELD_ZH[k] || k).join('、') }, '已编辑') : null,
+        el('span', { class: 'grow' }),
+        el('button', { class: 'btn small ghost', onclick: edit }, '编辑')),
+      el('div', { class: 'fam-row' }, el('span', { class: 'fam-k' }, '外貌标签'),
+        d.appearance.length ? el('div', { class: 'chips' }, d.appearance.map(a => el('span', {
+          class: `chip${!m.isBase && baseTags.has(a.tag) ? ' same' : ''}` },
+        sp(a.tag), el('em', {}, a.freq != null ? ` ${Math.round(a.freq * 100)}%` : ' 手动')))) : el('span', { class: 'muted' }, '—')),
+      d.notes ? el('div', { class: 'fam-row' }, el('span', { class: 'fam-k' }, '补充说明'), el('div', {}, d.notes)) : null,
+      wiki ? el('div', { class: 'fam-row' }, el('span', { class: 'fam-k' }, '简介'), wiki) : null);
+  }
+
   function drawEditor() {
+    if (st.familyAll && st.family) return drawFamilyAll();
+    st.famToken = null;
     const c = st.edit;
     const root = $(cfg.root);
     const isNew = !c.id;
@@ -342,6 +461,13 @@ export function createLibrary(kind) {
     const sync = () => {
       c.name = name.value; c.tag = tag.value; c.notes = notes.value;
       if (cfg.full) { c.series_tag = series.value; c.wiki = wiki.value; }
+    };
+    st.syncEdit = sync;
+    const saved = (d) => {     // 保存 / 重新获取后：以服务器返回的为准，切换标签上的名字跟着改
+      st.edit = d;
+      st.snap = snapOf(d);
+      const m = st.family?.members.find(x => x.id === d.id);
+      if (m) { m.name = d.name; if (m.isBase) st.family.base.name = d.name; }
     };
 
     const namesBox = chipEditor(c.names, n => n, (i) => { sync(); c.names.splice(i, 1); drawEditor(); },
@@ -365,13 +491,13 @@ export function createLibrary(kind) {
       const body = { name: c.name, tag: c.tag, names: c.names, notes: c.notes };
       if (cfg.full) Object.assign(body, { series_tag: c.series_tag, appearance: c.appearance, wiki: c.wiki });
       try {
-        st.edit = isNew ? await api.post(base, body) : await api.put(`${base}/${c.id}`, body);
+        saved(isNew ? await api.post(base, body) : await api.put(`${base}/${c.id}`, body));
         toast('已保存', 'ok');
         drawEditor();
       } catch (e) { toastError(e); }
     };
     const doRefresh = async (keep) => {
-      try { st.edit = await api.post(`${base}/${c.id}/refresh`, { keep_edited: keep }); toast('已更新', 'ok'); drawEditor(); }
+      try { saved(await api.post(`${base}/${c.id}/refresh`, { keep_edited: keep })); toast('已更新', 'ok'); drawEditor(); }
       catch (e) { toastError(e); }
     };
     const refresh = () => {
@@ -389,7 +515,7 @@ export function createLibrary(kind) {
     const nVar = (c.variant_rows || []).length;
     const del = async () => {
       const msg = c.parent_tag
-        ? `「${c.name}」及其名称映射会从${cfg.title}删除；后台缓存不会再自动取回它，需要时在本体的「造型变体」里点「获取」。`
+        ? `「${c.name}」及其名称映射会从${cfg.title}删除；以后不会再自动存回来；需要时在本体的「造型变体」里点「存入」。`
         : `「${c.name}」${nVar ? `和它的 ${nVar} 个造型变体` : ''}及名称映射会从${cfg.title}删除；下次检索会重新从 Danbooru 获取。`;
       if (!await confirmDialog(`删除这个${c.parent_tag ? '变体' : cfg.noun}？`, msg, '删除', true)) return;
       try { await api.del(`${base}/${c.id}`); toast('已删除', 'ok'); st.view = 'list'; load(); }
@@ -401,7 +527,7 @@ export function createLibrary(kind) {
 
     fill(root,
       el('div', { class: 'panel-title' },
-        el('button', { class: 'btn ghost small', onclick: () => { st.view = 'list'; load(); } }, '← 返回列表'),
+        el('button', { class: 'btn ghost small', onclick: backToList }, '← 返回列表'),
         el('h2', {}, isNew ? `手动新增${cfg.noun}` : c.name), el('span', { class: 'grow' }),
         !isNew && c.source !== 'manual' ? el('a', { class: 'small', href: cfg.url(c.tag), target: '_blank', rel: 'noreferrer' }, '在 Danbooru 查看') : null,
         !isNew ? el('button', { class: 'btn small ghost', onclick: refresh }, '从 Danbooru 重新获取') : null,
@@ -413,12 +539,13 @@ export function createLibrary(kind) {
             : `${sp(c.parent.tag)}（正在后台存入角色库）`, ' · '] : null,
         `来源：${c.source === 'manual' ? '手动新增' : 'Danbooru'}`, c.post_count ? ` · ${c.post_count} 张图` : '',
         c.fetched_at ? ` · 获取于 ${fmtTime(c.fetched_at)}` : '') : null,
+      familyBar(),
       el('div', { class: 'svc' },
         el('div', { class: cfg.full ? 'grid3 eq' : 'grid2' },
           field('名称', 'name', name, '显示用'),
           field(cfg.tagLabel, 'tag', tag, cfg.tagHint),
           cfg.full ? field('作品标签', 'series_tag', series, '写进 series') : null),
-        cfg.full && !isNew && !c.parent_tag ? field('造型变体', null, variantBox(c), `Danbooru 为这个角色的服装 / 形态单独建的标签；${MIN_POSTS} 张以上的自动缓存`) : null,
+        cfg.full && !isNew && !c.parent_tag ? field('造型变体', null, variantBox(c), `Danbooru 为这个角色的服装 / 形态单独建的标签；图片 ${MIN_POSTS} 张以上的会自动存入角色库`) : null,
         field('名称映射', null, namesBox, `这些名字都会对应到这个${cfg.noun}`),
         cfg.full ? field('外貌标签', 'appearance', appBox, '百分比 = 该角色图片中出现的比例') : null,
         field('补充说明', 'notes', notes, cfg.full ? '发给 LLM，优先于外貌标签' : '发给 LLM'),

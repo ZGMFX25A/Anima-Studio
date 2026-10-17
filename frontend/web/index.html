@@ -94,7 +94,7 @@
           <span class="muted small" id="llm-status"></span>
           <button class="btn ghost" id="llm-undo" disabled>撤销</button>
           <button class="btn" id="llm-modify" title="在当前字段的基础上按描述修改">修改</button>
-          <button class="btn accent" id="llm-generate" title="根据描述重新生成全部字段（覆盖已有内容）">生成</button>
+          <button class="btn accent" id="llm-generate" title="根据描述重新填写全部字段（覆盖已有内容）">填写</button>
         </div>
         <details class="research" id="llm-vision" hidden>
           <summary id="llm-vision-sum">识图结果</summary>
@@ -261,7 +261,7 @@
           <div class="seed-row">
             <span class="seg" id="seed-mode"><button data-v="random">随机</button><button data-v="locked">锁定</button></span>
             <input type="number" id="seed" data-bind="seed" data-type="int" min="0" placeholder="随机">
-            <button class="btn ghost small" id="seed-last" title="填入上一张图的种子并锁定">上一张</button>
+            <button class="btn ghost small" id="seed-last" title="填入上一张图的种子并锁定">上一张的种子</button>
           </div>
         </div>
         <div class="grid2">
@@ -304,11 +304,11 @@
     <div class="result-bar" id="result-bar" hidden>
       <div class="result-meta" id="result-meta"></div>
       <div class="result-actions">
-        <button class="btn ghost small" id="res-prompt">提示词</button>
+        <button class="btn ghost small" id="res-prompt">查看提示词</button>
         <button class="btn ghost small" id="res-fav">☆ 收藏</button>
         <button class="btn ghost small danger" id="res-delete">删除</button>
-        <button class="btn ghost small" id="res-reuse">复用</button>
-        <button class="btn ghost small" id="res-reveal">打开目录</button>
+        <button class="btn ghost small" id="res-reuse">复用设置</button>
+        <button class="btn ghost small" id="res-reveal">打开文件夹</button>
       </div>
     </div>
     <div class="strip" id="strip"></div>

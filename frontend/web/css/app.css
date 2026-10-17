@@ -65,6 +65,28 @@ button, input, select, textarea { font: inherit; color: inherit; }
   background: var(--panel-2); border-radius: 999px; padding: 5px 12px; cursor: pointer; color: var(--muted); font-size: 12.5px;
 }
 .status-pill:hover { color: var(--text); }
+/* 角色库详情：本体 / 变体切换标签；一次查看全部 */
+.fam-bar { display: flex; align-items: flex-start; gap: 14px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+  position: sticky; top: -20px; z-index: 5; box-shadow: 0 6px 14px -10px rgba(0, 0, 0, .5); }   /* -20px = .menu-body 上内边距，贴住顶边 */
+.fam-card { scroll-margin-top: 64px; }
+.fam-tabs { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; }
+.fam-tab { max-width: 240px; padding: 3px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel-2); color: var(--muted);
+  font: inherit; font-size: 12.5px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fam-tab:hover { color: var(--text); border-color: var(--border-strong); }
+.fam-tab.base { color: var(--text); }
+.fam-tab.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.fam-all { flex-shrink: 0; gap: 8px; padding-top: 2px; font-size: 12.5px; color: var(--muted); }
+.fam-cards { display: flex; flex-direction: column; gap: 12px; }
+.fam-card { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel); }
+.fam-card.current { border-color: var(--accent); }
+.fam-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fam-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; font-size: 13px; }
+.fam-k { color: var(--muted); font-size: 12px; padding-top: 3px; }
+.chip.same { opacity: .42; }
+.fam-wiki { color: var(--muted); white-space: pre-wrap; cursor: pointer; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.fam-wiki.open { display: block; }
+
 /* 引擎页：ComfyUI 启动参数（默认折叠，放在最下面） */
 .args-head { cursor: pointer; user-select: none; }
 .args-head .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

@@ -151,7 +151,7 @@ export function createSide(ctx) {
   function renderTextNote() {
     const n = ss.dom.note;
     fill(n, ss.manual
-      ? ['已手动修改（改人设字段不再同步） ', el('button', { class: 'linkbtn', onclick: () => { ss.manual = false; syncText(); } }, '恢复自动')]
+      ? ['已手动修改（改人设字段不再同步） ', el('button', { class: 'linkbtn', onclick: () => { ss.manual = false; syncText(); } }, '恢复自动组合')]
       : `按人设字段自动组合（改字段会同步）；前面自动加质量词${safety() ? '与分级' : ''}，负向提示词用默认值`);
   }
 
@@ -224,7 +224,7 @@ export function createSide(ctx) {
       fill(d.actions,
         it.cover ? el('span', { class: 'pv-cur' }, '★ 当前封面') : btn('☆ 设为封面', () => setCover(it.rec.id)),
         btn('↗ 复用到绘图页', () => reuseDialog(it.rec)),
-        btn('↓ 用它的提示词', () => usePrompt(it.rec)),
+        btn('↓ 用这张的提示词', () => usePrompt(it.rec)),
         el('span', { class: 'grow' }),
         btn('删除这张', () => removeImage(it.rec), 'danger'));
     }

@@ -43,8 +43,8 @@ export function reuseDialog(rec) {
     body: '会恢复提示词各字段、模型与采样参数、画幅、参考开关与参考图，然后切换到绘图页。',
     stack: true,
     actions: [
-      { label: '正常复用', sub: '种子设为随机', kind: '', onClick: () => applyRecord(rec, false) },
-      { label: '连同种子复用', sub: `锁定种子 ${rec.seed}，可复现这张图`, kind: 'accent', onClick: () => applyRecord(rec, true) },
+      { label: '不含种子', sub: '种子设为随机，画出相似但不同的图', kind: '', onClick: () => applyRecord(rec, false) },
+      { label: '连同种子', sub: `锁定种子 ${rec.seed}，可复现这张图`, kind: 'accent', onClick: () => applyRecord(rec, true) },
       { label: '取消', kind: 'ghost' },
     ],
   });

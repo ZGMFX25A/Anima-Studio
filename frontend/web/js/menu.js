@@ -193,10 +193,10 @@ function argsCard(c) {
       el('span', { class: 'args-caret' }, '▸'), el('h3', {}, 'ComfyUI 启动参数'),
       el('span', { class: 'muted small mono' }, a.comfy_args ? a.comfy_args : '未加参数'),
       argsOpen ? dirty : null,
-      el('div', { class: 'svc-btns' }, argsOpen
-        ? el('button', { class: `btn small accent${busy.args ? ' busy' : ''}`, disabled: busy.args,
-          onclick: (e) => { e.stopPropagation(); save(); } }, '保存')
-        : el('span', { class: 'muted small' }, '展开'))),
+      el('div', { class: 'svc-btns' },
+        argsOpen ? el('button', { class: `btn small accent${busy.args ? ' busy' : ''}`, disabled: busy.args,
+          onclick: (e) => { e.stopPropagation(); save(); } }, '保存') : null,
+        el('button', { class: 'btn small ghost', onclick: (e) => { e.stopPropagation(); toggle(); } }, argsOpen ? '收起' : '展开'))),
     argsOpen ? null : el('div', { class: 'muted small' }, '一般不用改。AMD 显卡显存不足时可以在这里加参数，点开查看说明。'),
     argsOpen ? el('div', { class: 'seed-row' }, input) : null,
     argsOpen ? el('div', { class: 'hint' },
