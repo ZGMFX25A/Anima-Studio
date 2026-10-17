@@ -27,6 +27,7 @@ KEY = "anima_painter"
 A1111_KEY = "parameters"
 FORMAT = "anima-studio/image"
 VERSION = 2
+SEED_MAX = 2 ** 53 - 1      # 绘画模块接受的最大种子（JS 能精确表示的整数上限）
 FIELD_NAMES = ("quality_meta_year_safe", "count", "character", "series", "artist",
                "appearance", "action", "nltags", "neg")
 _MARKER = config.DATA_DIR / "image_meta_v2.done"
@@ -217,14 +218,26 @@ def _parse_comfy(text: str) -> dict | None:
                     return t
         return ""
 
+    def int_of(ref, depth=0) -> int | None:
+        """种子：直接写的数，或连到别的节点（Primitive / Seed 节点）上的数。"""
+        if isinstance(ref, int) and not isinstance(ref, bool):
+            return ref
+        if depth > 4 or not isinstance(ref, list) or not ref:
+            return None
+        inp = (nodes.get(str(ref[0])) or {}).get("inputs") or {}
+        for k in ("seed", "noise_seed", "value", "int", "number"):
+            if k in inp and (v := int_of(inp[k], depth + 1)) is not None:
+                return v
+        return None
+
     for node in nodes.values():
         inp = node.get("inputs") or {}
         if "positive" in inp:
             pos = text_of(inp["positive"])
             if pos:
+                seed = int_of(inp.get("seed"))
                 return {"positive": pos.strip(), "negative": text_of(inp.get("negative")).strip(),
-                        "seed": inp.get("seed") if isinstance(inp.get("seed"), int) else
-                        (inp.get("noise_seed") if isinstance(inp.get("noise_seed"), int) else None), "info": {}}
+                        "seed": seed if seed is not None else int_of(inp.get("noise_seed")), "info": {}}
     texts = [n["inputs"]["text"] for n in nodes.values()
              if "CLIPTextEncode" in str(n.get("class_type")) and isinstance((n.get("inputs") or {}).get("text"), str)]
     if texts:
@@ -292,6 +305,10 @@ def read(raw: bytes) -> dict:
         parsed, source = _parse_novelai(texts), "novelai"
     if not parsed or not parsed["positive"]:
         raise ValueError("这张图片里没有找到生成参数。聊天软件或网站压缩过的图片会丢掉参数，请用原图")
+    # 种子超出绘画模块的范围（≤ 2^53−1，浏览器也只能精确表示到这里）时不能沿用：ComfyUI 的种子常常更大
+    seed = parsed.get("seed")
+    if isinstance(seed, int) and not 0 <= seed <= SEED_MAX:
+        parsed = {**parsed, "seed": None, "seed_out_of_range": str(seed)}
     return {"source": source, "source_label": SOURCE_LABELS[source], **parsed}
 
 

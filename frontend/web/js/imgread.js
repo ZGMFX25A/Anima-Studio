@@ -65,7 +65,16 @@ function showDialog(res, filename) {
   const block = (title, text) => el('div', { class: 'pblock' },
     el('div', { class: 'pblock-head' }, title), el('div', { class: 'pbox import-text' }, text || '（空）'));
   const notes = [];
+  // 种子：本程序的图和其它工具的图（A1111 的 Seed、ComfyUI 采样节点的 seed、NovelAI 的 seed）都能沿用。
+  // 默认勾上；手动取消过一次就记住（'0'），旧版本记下的 '' 也算取消过
   let keepSeed = null;
+  if (seed != null) {
+    keepSeed = el('input', { type: 'checkbox', checked: lsGet(SEED_KEY) === null || lsGet(SEED_KEY) === '1' });
+    keepSeed.addEventListener('change', () => lsSet(SEED_KEY, keepSeed.checked ? '1' : '0'));
+  }
+  if (res.seed_out_of_range) {
+    notes.push(el('div', { class: 'hint warn' }, `原图的种子 ${res.seed_out_of_range} 超出本程序能用的范围（最大 2^53−1），不能沿用。`));
+  }
   if (anima) {
     if (rec) notes.push(el('div', { class: 'hint' }, `本机图库里有这张图的记录（#${rec.id}）：会像「复用设置」一样恢复全部设置，包括人物 / 动作参考图。`));
     else {
@@ -77,11 +86,8 @@ function showDialog(res, filename) {
       if (p.model && !modelInfo(p.model)) notes.push(el('div', { class: 'hint warn' }, `本机没有原图的模型 ${p.model}，会改用默认模型。`));
       if (!res.form) notes.push(el('div', { class: 'hint' }, '这是旧版本生成的图，只记录了整段提示词：会按下面选的方式拆到各字段，模型与采样参数照原图恢复。'));
     }
-    const lsv = lsGet(SEED_KEY);
-    keepSeed = el('input', { type: 'checkbox', checked: lsv === '1' });
-    keepSeed.addEventListener('change', () => lsSet(SEED_KEY, keepSeed.checked ? '1' : ''));
   } else {
-    notes.push(el('div', { class: 'hint' }, '其它工具生成的图：只读取提示词，拆到各字段后覆盖当前字段；模型、采样参数、画幅和种子保持不变。'));
+    notes.push(el('div', { class: 'hint' }, `其它工具生成的图：读取提示词，拆到各字段后覆盖当前字段${seed != null ? '，种子可选沿用' : ''}；模型、采样参数和画幅保持不变（原图的模型与本程序不同，采样参数不通用）。`));
   }
 
   // 拆分方式（没有字段原值时）
@@ -119,11 +125,11 @@ function showDialog(res, filename) {
       el('div', { class: 'import-src' }, `来源：${res.source_label}`, el('span', { class: 'muted' }, `  ${filename}`)),
       block('正向提示词', res.positive),
       block('负向提示词', res.negative),
-      paramLine ? block(anima ? '参数' : '原图参数（不会读取）', paramLine) : null,
+      paramLine ? block(anima ? '参数' : seed != null ? '原图参数（只读取种子）' : '原图参数（不会读取）', paramLine) : null,
       ...notes,
       keepSeed ? el('label', { class: 'import-opt check' }, keepSeed,
-        el('span', {}, `保持相同种子${seed != null ? `（${seed}）` : ''}`),
-        el('small', { class: 'muted' }, '不勾选则种子设为随机')) : null,
+        el('span', {}, `${anima ? '保持相同种子' : '使用原图的种子'}（${seed}）`),
+        el('small', { class: 'muted' }, anima ? '不勾选则种子设为随机' : '勾选后锁定为这个种子；不勾选则种子保持当前设置')) : null,
       status),
     onClose: () => {
       if (controller) {
@@ -161,7 +167,7 @@ function showDialog(res, filename) {
             }
           }
           if (anima) applyAnima(res, fields, withSeed);
-          else applyFields(fields, res.source_label);
+          else applyFields(fields, res.source_label, withSeed ? seed : null);
         },
       },
     ],
@@ -187,9 +193,10 @@ function applyAnima(res, fields, withSeed) {
   applyRecord({ form, steps: p.steps, cfg: p.cfg, seed: p.seed }, withSeed, '已读取图片的设置');
 }
 
-// 其它来源：只覆盖提示词字段
-function applyFields(fields, label) {
+// 其它来源：覆盖提示词字段；seed 不为空时锁定为原图的种子（否则种子不动）
+function applyFields(fields, label, seed) {
   for (const k of FIELD_NAMES) app.form.fields[k] = fields[k] ?? '';
+  if (seed != null) { app.form.seed_mode = 'locked'; app.form.seed = seed; }
   saveForm();
   syncAll();
   emit('change', 'fields');
@@ -197,5 +204,6 @@ function applyFields(fields, label) {
     const node = document.querySelector(`[data-field="${k}"]`);
     if (node) { node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash'); }
   }
-  toast(`已读取 ${label} 的提示词`, 'ok');
+  if (seed != null) emit('form-replaced');      // 种子栏跟着刷新
+  toast(seed != null ? `已读取 ${label} 的提示词并锁定种子 ${seed}` : `已读取 ${label} 的提示词`, 'ok');
 }
