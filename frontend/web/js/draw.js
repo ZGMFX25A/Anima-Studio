@@ -3,6 +3,7 @@ import { api, errorText } from './api.js';
 import { $, $$, el, fill, toast, toastError, dropzone, lightbox, confirmDialog, fmtDuration, dragScroll } from './ui.js';
 import { app, bindAll, syncAll, setField, saveForm, on, emit, modelInfo, refHashesInUse } from './store.js';
 import { showPromptModal, reuseDialog } from './records.js';
+import { attachArtistPicker, artistHints, renderArtistHints } from './artistpick.js';
 
 const STAGE_TEXT = { queued: '排队中', preparing: '准备中', base: '绘制中', refine: '精细重绘', upscale: '超分', saving: '保存中', done: '完成' };
 const TERMINAL = ['succeeded', 'failed', 'cancelled'];
@@ -13,6 +14,7 @@ let crZone, prZone;
 // ───────────────────────────── 初始化 ─────────────────────────────
 export function initDraw() {
   const d = app.boot.defaults;
+  attachArtistPicker($('input[data-field="artist"]'));     // 输入时从画师库给候选
   fill($('#aspect'), 
     ...Object.keys(d.aspect_presets).map(k => el('option', { value: k }, k)),
     el('option', { value: 'custom' }, '自定义'));
@@ -209,6 +211,13 @@ export function refresh() {
     aw.append(el('span', { class: 'muted' }, '多画师混合时稳定性会下降'));
   }
   aw.hidden = !aw.childNodes.length;
+  // 画师库里能对上、但不是标准标签的写法（@k子）：提示替换成标准标签
+  const ah = $('#artist-hint'), key = toks.join('|');
+  if (ah.dataset.for !== key) {
+    ah.dataset.for = key;
+    if (!toks.length) renderArtistHints(ah, null, []);
+    else artistHints(toks).then(h => { if (ah.dataset.for === key) renderArtistHints(ah, $('input[data-field="artist"]'), h); });
+  }
 
   // 参考
   const feat = m?.features || {};

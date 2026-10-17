@@ -5,6 +5,7 @@ import json
 import re
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -76,7 +77,7 @@ def find_character(name: str, name_en: str, series: str) -> list[dict]:
 # ───────────── 角色模糊搜索（名字 + 作品） ─────────────
 
 def _skey(text: str) -> str:
-    return re.sub(r"[\s_]+", "_", (text or "").strip().lower())
+    return re.sub(r"[\s_]+", "_", unicodedata.normalize("NFKC", text or "").strip().lower())
 
 
 def _same_series(a: str, b: str) -> bool:
@@ -107,19 +108,22 @@ def _copyright_hit(tag: str, keys: list[str]) -> bool:
     return any(_same_series(c, k) for c, f in related(tag, "copyright", 5) if f >= 0.3 for k in keys)
 
 
-def _wiki_names(query: str, title_key: str = "", limit: int = 30) -> list[dict]:
+def _wiki_names(query: str, title_key: str = "", limit: int = 30, parts: tuple[str, ...] = ()) -> list[dict]:
     """wiki 别名里包含 query 的角色：只写名字的一部分也能命中（如「晶」→ 清澄晶 → akira_(blue_archive)）。
 
+    parts：按顺序都出现即可（「*优香*睡衣*」→ 早濑优香(睡衣)），这时忽略 query。
     每次 2–6 秒；标题过滤与按图片数排序同时用会让 Danbooru 数据库超时（HTTP 500），所以二选一。
     """
-    params = {"search[other_names_match]": f"*{query}*", "search[tag][category]": CAT_CHARACTER,
+    parts = parts or (query,)
+    params = {"search[other_names_match]": "*" + "*".join(parts) + "*", "search[tag][category]": CAT_CHARACTER,
               "limit": limit, "only": "title,other_names"}
     if title_key:
         params["search[title_ilike]"] = f"*{title_key}*"
     else:
         params["search[order]"] = "post_count"
-    q = query.casefold()
-    return [{"tag": x["title"], "matched": next((n for n in x.get("other_names") or [] if q in n.casefold()), "")}
+    ps = [x.casefold() for x in parts]
+    return [{"tag": x["title"], "matched": next((n for n in x.get("other_names") or []
+                                                 if all(p in n.casefold() for p in ps)), "")}
             for x in _get("/wiki_pages.json", params) or [] if x.get("title")]
 
 
@@ -138,11 +142,11 @@ def _tag_info(tags: list[str]) -> dict[str, dict]:
     return {x["name"]: x for x in d if x.get("name")}
 
 
-def _wiki_cands(query: str, keys: list[str], fallback: bool) -> list[dict]:
+def _wiki_cands(query: str, keys: list[str], fallback: bool, parts: tuple[str, ...] = ()) -> list[dict]:
     """wiki 别名检索 + 补上图片数。有作品时先按作品过滤标题；fallback：过滤后没有结果时不带作品再查一次。"""
-    wiki = _wiki_names(query, keys[-1]) if keys else []
+    wiki = _wiki_names(query, keys[-1], parts=parts) if keys else []
     if not wiki and (fallback or not keys):
-        wiki = _wiki_names(query)
+        wiki = _wiki_names(query, parts=parts)
     info = _tag_info([w["tag"] for w in wiki])
     return [{**w, "post_count": info[w["tag"]].get("post_count") or 0} for w in wiki
             if (info.get(w["tag"]) or {}).get("category") == CAT_CHARACTER]
@@ -203,6 +207,15 @@ def search_characters(name: str, series: str = "", name_en: str = "", full: bool
                     errors.append(e)
         if errors and len(errors) == len(jobs):
             raise errors[0]
+        if not pool:      # 「睡衣优香」这种 服装+名字 整段查不到：拆成两段、两种顺序再查（别名写的是「早濑优香(睡衣)」）
+            splits = [(q[:i], q[i:]) for q in cjk for i in sorted({len(q) // 2, (len(q) + 1) // 2}) if 2 <= i <= len(q) - 2]
+            pats = list(dict.fromkeys(p for a, b in splits[:2] for p in ((a, b), (b, a))))
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                for f in [ex.submit(_wiki_cands, "", keys, True, p) for p in pats]:
+                    try:
+                        add(f.result())
+                    except WebError:
+                        pass
         if keys and not hit():
             verify(2, False)
     else:

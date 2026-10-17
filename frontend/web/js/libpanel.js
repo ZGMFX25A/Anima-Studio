@@ -2,6 +2,7 @@
 import { api } from './api.js';
 import { $, el, fill, toast, toastError, confirmDialog, modal, fmtTime } from './ui.js';
 import { on } from './store.js';
+import { clearArtistHints } from './artistpick.js';
 
 const FIELD_ZH = { name: '名称', tag: '标准标签', series_tag: '作品', wiki: '简介', appearance: '外貌标签', notes: '补充说明' };
 const sp = (t) => (t || '').replace(/_/g, ' ');
@@ -160,6 +161,7 @@ export function createLibrary(kind) {
       fetchBtn.disabled = true;
       try {
         const c = await api.post(`${base}/fetch`, { name });
+        clearArtistHints();
         toast(`已加入：${c.name} → ${sp(c.tag)}`, 'ok');
         openEditor(c.id);
       } catch (e) { toastError(e); }
@@ -266,6 +268,7 @@ export function createLibrary(kind) {
     const narrowed = keys.length && items.some(c => c.series_match);
     const nMatch = items.filter(c => c.series_match).length;
     return el('div', { class: 'fz-box' },
+      fz.res.offline ? el('div', { class: 'small', style: { color: 'var(--warn)' } }, `Danbooru 连不上（${fz.res.offline}），下面只有角色库里的结果`) : null,
       el('div', { class: 'muted small' },
         !items.length ? `Danbooru 上没有找到「${fz.name}」，少写几个字或换个写法试试`
           : fz.series && !keys.length ? `没认出作品「${fz.series}」，下面的结果没有按作品筛选；换个写法试试（英文名、日文名）`
@@ -464,6 +467,7 @@ export function createLibrary(kind) {
     };
     st.syncEdit = sync;
     const saved = (d) => {     // 保存 / 重新获取后：以服务器返回的为准，切换标签上的名字跟着改
+      clearArtistHints();      // 画师的名称映射可能变了，artist 框的替换提示重新查
       st.edit = d;
       st.snap = snapOf(d);
       const m = st.family?.members.find(x => x.id === d.id);
@@ -518,7 +522,7 @@ export function createLibrary(kind) {
         ? `「${c.name}」及其名称映射会从${cfg.title}删除；以后不会再自动存回来；需要时在本体的「造型变体」里点「存入」。`
         : `「${c.name}」${nVar ? `和它的 ${nVar} 个造型变体` : ''}及名称映射会从${cfg.title}删除；下次检索会重新从 Danbooru 获取。`;
       if (!await confirmDialog(`删除这个${c.parent_tag ? '变体' : cfg.noun}？`, msg, '删除', true)) return;
-      try { await api.del(`${base}/${c.id}`); toast('已删除', 'ok'); st.view = 'list'; load(); }
+      try { await api.del(`${base}/${c.id}`); clearArtistHints(); toast('已删除', 'ok'); st.view = 'list'; load(); }
       catch (e) { toastError(e); }
     };
     const editedMark = (k) => c.edited.includes(k) && c.source !== 'manual' ? el('span', { class: 'badge warn small-badge' }, '已编辑') : null;

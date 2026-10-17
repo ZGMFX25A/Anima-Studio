@@ -15,6 +15,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import unicodedata
 from pathlib import Path
 from typing import IO
 
@@ -68,8 +69,13 @@ class PersonaError(ValueError):
 
 # ───────────────────────────── 规范化 ─────────────────────────────
 
+def fold(text: str) -> str:
+    """比较用：全角 / 半角统一（Ｋ子 = K子）、不分大小写。"""
+    return unicodedata.normalize("NFKC", text or "").casefold()
+
+
 def norm(name: str) -> str:
-    return re.sub(r"[\s_\-·・.@]+", "", (name or "").casefold())
+    return re.sub(r"[\s_\-·・.@]+", "", fold(name))
 
 
 def split_list(v) -> list[str]:
@@ -386,7 +392,7 @@ def clear_cover(pid: int) -> dict | None:
 
 def _hit(name: str, text: str, text_sp: str, text_ns: str) -> int:
     """name 在描述中的位置（找不到为 -1）。英文名按整词匹配，避免 aris 命中 paris。"""
-    k = name.casefold().strip()
+    k = fold(name).strip()
     if len(norm(k)) < 2:
         return -1
     if k.isascii():
@@ -397,16 +403,19 @@ def _hit(name: str, text: str, text_sp: str, text_ns: str) -> int:
     return i if i >= 0 else text_ns.find(re.sub(r"\s+", "", k))
 
 
-def match(text: str, limit: int = 4) -> list[dict]:
-    """描述中出现名称或别名的人设，按出现位置排序：[{persona, matched}]。"""
-    t = (text or "").casefold()
+def match(text: str, limit: int = 4, extra_names=None) -> list[dict]:
+    """描述中出现名称或别名的人设，按出现位置排序：[{persona, matched}]。
+
+    extra_names(p)：另外认的名字（已有角色：角色库里这个角色及其变体的全部名称，如 优香 / ユウカ / hayase yuuka）。
+    """
+    t = fold(text)
     if not t.strip():
         return []
     t_sp, t_ns = re.sub(r"[\s_]+", " ", t), re.sub(r"\s+", "", t)
     hits = []
     for p in all_full():
         best = None
-        for n in [p["name"], *p["aliases"]]:
+        for n in [p["name"], *p["aliases"], *(extra_names(p) if extra_names else [])]:
             i = _hit(n, t, t_sp, t_ns)
             if i >= 0 and (best is None or i < best[0]):
                 best = (i, n)

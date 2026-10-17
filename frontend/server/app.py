@@ -22,8 +22,9 @@ from .llm import persona as llm_persona
 from .llm import retry as llm_retry
 from .llm import store as llm_store
 from .personas import PersonaError
-from .web import danbooru, net, tagsearch, variant_cache
-from .web.library import CHARACTERS, LIBS
+from .web import danbooru, net, research, tagsearch, variant_cache
+from .web.library import ARTISTS, CHARACTERS, LIBS
+from .web.library import norm as library_norm
 from .web.net import WebError
 
 log = logging.getLogger("frontend.app")
@@ -486,13 +487,27 @@ def library_get(kind: str, rid: int):
     return _detail(kind, r) if r else err(404, "NOT_FOUND", "条目不存在")
 
 
+@app.post("/api/library/artists/resolve")
+def library_artist_resolve(names: list[str] = Body(..., embed=True)):
+    """artist 框里不是标准标签的写法（@k子、@K子老师）→ 画师库里对应的画师，页面据此提示「替换成 @courreges ace」。"""
+    out = []
+    for raw in names[:12]:
+        n = (raw or "").strip().lstrip("@").strip()
+        if not n:
+            continue
+        row = ARTISTS.lookup(n) or next((x["row"] for x in ARTISTS.fuzzy(n, limit=1)), None)
+        if row and library_norm(row["tag"]) != library_norm(n):
+            out.append({"input": raw, "tag": row["tag"], "name": row["name"], "post_count": row["post_count"]})
+    return {"items": out}
+
+
 @app.post("/api/library/characters/search")
 def library_char_search(name: str = Body(""), series: str = Body("")):
-    """模糊搜索：名字（可只写一部分）+ 作品 → Danbooru 角色标签候选，选中后用 /import 导入。"""
+    """模糊搜索：名字（可只写一部分）+ 作品 → 角色库里模糊比对上的 + Danbooru 角色标签候选，选中后用 /import 导入。"""
     if not name.strip():
         return err(422, "INVALID", "请输入名字")
     try:
-        r = danbooru.search_characters(name, series)
+        r = research.fuzzy_search(name, series)
     except WebError as e:
         return err(502, "WEB_ERROR", str(e))
     have = CHARACTERS.tags_present(c["tag"] for c in r["items"])

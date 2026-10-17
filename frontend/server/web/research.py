@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 
 from .. import config
 from ..llm import retry
 from . import danbooru, variant_cache
-from .library import ARTISTS, CHARACTERS
+from .library import ARTISTS, CHARACTERS, _covers, _fz
 from .net import WebError
 
 
@@ -35,16 +36,17 @@ def extract(p: dict, m: dict, description: str, current: dict,
                         retry.json_check(("characters", "artists")), log, request_id)
     log.pop("request", None)    # 完整请求体只在正式填写的日志里记
 
-    def items(key: str, fields: tuple) -> list[dict]:
+    def items(key: str, fields: tuple, n: int) -> list[dict]:
         out = []
         for c in raw.get(key) or []:
             if isinstance(c, dict):
                 item = {k: str(c.get(k) or "").strip().lstrip("@") for k in fields}
                 if item["name"] or item["name_en"]:
                     out.append(item)
-        return out[:3]
+        return out[:n]
 
-    return items("characters", ("name", "name_en", "series")), items("artists", ("name", "name_en")), log
+    return (items("characters", ("name", "name_en", "series", "outfit"), 4), items("artists", ("name", "name_en"), 3),
+            log)
 
 
 def _summary(ch: dict) -> dict:
@@ -54,12 +56,20 @@ def _summary(ch: dict) -> dict:
 
 def _items(results: list[dict]) -> list[dict]:
     return [{"name": r["query"]["name"] or r["query"]["name_en"], "status": r["status"], "error": r["error"],
-             "alternatives": r["alternatives"], **(_summary(r["character"]) if r["character"] else {})}
+             "alternatives": r["alternatives"], "outfit": r["query"].get("outfit", ""),
+             "variant_of": r["base"]["tag"] if r.get("base") else "", "options": len(r.get("options") or []),
+             **(_summary(r["character"]) if r["character"] else {})}
             for r in results]
 
 
-def _research(found: list[dict], lib, find, profile) -> list[dict]:
-    """逐个解析：先查本地资料库，没有才联网查 Danbooru 并存入资料库。"""
+def _series_ok(row: dict, series: str) -> bool:
+    """模糊命中时核对作品（识别结果里的作品是英文写法，如 blue archive）；没给作品时不核对。"""
+    s = danbooru._skey(series)
+    return not s or not s.isascii() or not row.get("series_tag") or danbooru._same_series(s, row["series_tag"])
+
+
+def _research(found: list[dict], lib, find, profile, series_check: bool = False) -> list[dict]:
+    """逐个解析：名称映射精确命中 → 本地模糊比对 → 联网查 Danbooru 并存入资料库。"""
     results = []
     for q in found:
         names = [n for n in (q["name"], q["name_en"]) if n]
@@ -70,11 +80,20 @@ def _research(found: list[dict], lib, find, profile) -> list[dict]:
             entry.update(status="library", character=hit)
             results.append(entry)
             continue
+        accept = (lambda row: _series_ok(row, q.get("series", ""))) if series_check else None
+        fz = next((f[0] for f in (lib.fuzzy(n, accept) for n in names) if f), None)
+        if fz:
+            if fz["score"] > 1 and q["name"]:    # 「优香」→「早濑优香」这类字字都对上的，记下这个写法，下次直接命中
+                lib.add_names(fz["row"]["id"], [q["name"]])
+            entry.update(status="library", character=lib.get(fz["row"]["id"]), fuzzy=fz["matched"])
+            results.append(entry)
+            continue
         try:
             cands = find(q)
             if cands:
-                best = cands[0]
-                entry["alternatives"] = [c["tag"] for c in cands[1:]]
+                # 同名的（如 3 个叫 k子 的画师）：资料库里已有的优先
+                best = next((c for c in cands if lib.get_by_tag(c["tag"])), cands[0])
+                entry["alternatives"] = [c["tag"] for c in cands if c is not best]
                 existing = lib.get_by_tag(best["tag"])
                 if existing:
                     lib.add_names(existing["id"], names)
@@ -86,28 +105,167 @@ def _research(found: list[dict], lib, find, profile) -> list[dict]:
         except WebError as e:
             entry.update(status="error", error=str(e))
         results.append(entry)
-    # 不同写法指向同一条目时只保留一个
-    seen, out = set(), []
-    for e in results:
-        cid = (e["character"] or {}).get("id")
-        if cid is None or cid not in seen:
-            out.append(e)
-            if cid is not None:
-                seen.add(cid)
-    return out
-
-
-def research_characters(found: list[dict]) -> list[dict]:
-    results = _research(found, CHARACTERS, lambda q: danbooru.find_character(q["name"], q["name_en"], q["series"]),
-                        danbooru.profile)
-    for r in results:      # 后台补齐本体与变体，不拖慢这次填写
-        if r["character"]:
-            variant_cache.schedule(r["character"]["tag"])
     return results
 
 
+def _dedupe(results: list[dict]) -> list[dict]:
+    """不同写法指向同一条目时只保留一个；同一角色的不同造型（变体，或没对上的服装）各留一条。"""
+    seen, out = set(), []
+    for e in results:
+        ch = e["character"]
+        key = (ch["id"], e["query"].get("outfit", "") if e.get("options") else "") if ch else None
+        if key is None or key not in seen:
+            out.append(e)
+            if key is not None:
+                seen.add(key)
+    return out
+
+
+# ───────────── 造型变体：按识别出的服装（或描述里这个角色所在的那一句）选变体 ─────────────
+
+_CLAUSE = re.compile(r"[，,。.；;！!？?\n、]|和|与|跟|及|还有|以及|\band\b|\bwith\b")
+
+
+def _fold(text: str) -> str:
+    return unicodedata.normalize("NFKC", text or "").casefold()
+
+
+def _n(text: str) -> str:
+    return re.sub(r"[\s_\-·・.@()（）\[\]【】「」『』]+", "", _fold(text))
+
+
+def _cues(v: dict, base: dict) -> set[str]:
+    """一个变体的「服装词」：标签里多出的括号（pajamas）、名称括号里的（睡衣）、名称去掉本体名剩下的（パジャマ）。"""
+    base_names = sorted({_fold(n) for n in [base["name"], *base.get("names", [])] if len(_n(n)) >= 2}, key=len, reverse=True)
+    series_words = {_n(p) for n in [base["name"], *base.get("names", [])] for p in re.findall(r"[(（]([^()（）]+)[)）]", _fold(n))}
+    series_words |= {_n(base.get("series_tag", ""))}
+    q = danbooru.qualifier(v["tag"], base["tag"])
+    out = {q} | {w for w in re.split(r"[\s_]+", q) if len(w) >= 3 and not any(ch.isdigit() for ch in w)}
+    for name in [v["name"], *v.get("names", [])]:
+        s = _fold(name)
+        out |= set(re.findall(r"[(（]([^()（）]+)[)）]", s))
+        if not s.isascii():
+            rest = s
+            for b in base_names:
+                rest = rest.replace(b, "")
+            out.add(rest)
+    cues = set()
+    for c in out:
+        k = _n(c)
+        if k and k not in series_words and len(k) >= (3 if k.isascii() else 2) and len(k) <= 16:
+            cues.add(k)
+    return cues
+
+
+def _clauses(description: str, names: list[str]) -> list[str]:
+    """描述里提到这个角色的那几句（按标点和「和 / 与」分开）。"""
+    keys = [_n(n) for n in names if len(_n(n)) >= 2]
+    return [c for c in _CLAUSE.split(_fold(description)) if c and any(k in _n(c) for k in keys)]
+
+
+def _base_of(ch: dict) -> dict:
+    return (CHARACTERS.get_by_tag(ch["parent_tag"]) if ch.get("parent_tag") else None) or ch
+
+
+def _pick_variant(ch: dict, q: dict, description: str, scan: bool = True) -> tuple[dict, dict | None, list[dict]]:
+    """返回 (用哪个条目, 它的本体（用的是变体时）, 没对上时附给 LLM 的可选变体)。
+
+    scan：识别结果没给服装时，去描述里这个角色所在的那一句找；同一角色出现了好几次时不找（那句里的服装多半是别的条目的）。
+    """
+    base = _base_of(ch)
+    variants = CHARACTERS.variants_of(base["tag"])
+    if not variants:
+        return ch, (base if base is not ch else None), []
+    outfit = (q.get("outfit") or "").strip()
+    texts = [_n(outfit)] if outfit else [_n(c) for c in _clauses(description, [q["name"], q["name_en"], ch["name"],
+                                                                                *base.get("names", [])])] if scan else []
+    best, best_len = None, 0
+    for v in variants:
+        for cue in _cues(v, base):
+            if any(cue in t or (len(t) >= 2 and t in cue) for t in texts if t) and len(cue) > best_len:
+                best, best_len = v, len(cue)
+    if best:
+        return CHARACTERS.get(best["id"]), base, []
+    if ch is not base:                       # 名字本身就是变体（如「米莉亚」）
+        return ch, base, []
+    return ch, None, variants if outfit else []
+
+
+def research_characters(found: list[dict], description: str = "") -> list[dict]:
+    results = _research(found, CHARACTERS, lambda q: danbooru.find_character(q["name"], q["name_en"], q["series"]),
+                        danbooru.profile, series_check=True)
+    bases = [_base_of(r["character"])["tag"] if r["character"] else None for r in results]
+    for r, b in zip(results, bases):
+        if r["character"]:
+            variant_cache.schedule(r["character"]["tag"])      # 后台补齐本体与变体，不拖慢这次填写
+            ch, base, options = _pick_variant(r["character"], r["query"], description, scan=bases.count(b) == 1)
+            r.update(character=ch, base=base, options=options)
+    return _dedupe(results)
+
+
 def research_artists(found: list[dict]) -> list[dict]:
-    return _research(found, ARTISTS, lambda q: danbooru.find_artist(q["name"], q["name_en"]), danbooru.artist_profile)
+    return _dedupe(_research(found, ARTISTS, lambda q: danbooru.find_artist(q["name"], q["name_en"]),
+                             danbooru.artist_profile))
+
+
+def fuzzy_search(name: str, series: str = "") -> dict:
+    """角色库 / 人设导入的「模糊搜索」：先列角色库里模糊比对上的（「睡衣优香」→ 早濑优香(睡衣)），再接 Danbooru 的结果。
+
+    Danbooru 连不上时只给角色库的结果（offline 为出错信息）；两边都没有时抛出 WebError。
+    """
+    offline = None
+    try:
+        r = danbooru.search_characters(name, series)
+    except WebError as e:
+        s = danbooru._skey(series)
+        r, offline = {"items": [], "series_tags": [s] if s and s.isascii() else []}, str(e)
+    keys = r["series_tags"]
+    local = []
+    for x in CHARACTERS.fuzzy(name, limit=10):
+        row = x["row"]
+        sm = (danbooru._series_hit(row["tag"], keys) or any(danbooru._same_series(_n(row["series_tag"]), _n(k))
+                                                             for k in keys if row["series_tag"])) if keys else None
+        local.append({"tag": row["tag"], "post_count": row["post_count"], "matched": x["matched"],
+                      "series_match": sm, "exact": x["score"] > 1, "local": True})
+    if offline and not local:
+        raise WebError(offline)
+    have = {x["tag"] for x in local}
+    items = local + [c for c in r["items"] if c["tag"] not in have]
+    items.sort(key=lambda c: (c["series_match"] is False, not c.get("local")))   # 稳定排序：属于该作品的在前，同组里角色库的在前
+    return {"items": items[:20], "series_tags": keys, "offline": offline}
+
+
+def fuzzy_persona(q: dict, plist: list[dict]) -> dict | None:
+    """识别出的角色名与人设模糊比对（字字都出现在人设的名称 / 别名 / 角色库名称里，并核对作品）：「优香」→ 人设「早濑优香」。"""
+    best, best_s = None, 0.0
+    for name in (q["name"], q["name_en"]):
+        k = _fz(name)
+        if len(k) < 2:
+            continue
+        for p in plist:
+            if q.get("series") and p.get("series") and not danbooru._same_series(
+                    danbooru._skey(q["series"]), danbooru._skey(p["series"])):
+                continue
+            for n in [p["name"], *p["aliases"], *persona_names(p)]:
+                t = _fz(n)
+                if t and ((k in t) if k.isascii() else _covers(k, t)) and len(k) / len(t) > best_s:
+                    best, best_s = p, len(k) / len(t)
+    return best
+
+
+def persona_names(p: dict) -> list[str]:
+    """已有角色的人设，另外认角色库里这个角色（本体与变体）的全部名称。"""
+    if p.get("kind") != "existing":
+        return []
+    out = []
+    for t in {p.get("character_tag"), p.get("source_tag"), *(o.get("character_tag") for o in p.get("outfits") or [])}:
+        row = CHARACTERS.get_by_tag((t or "").strip().replace(" ", "_")) if t else None
+        if not row:
+            continue
+        base = CHARACTERS.get_by_tag(row["parent_tag"]) if row.get("parent_tag") else row
+        for r in [base or row, *CHARACTERS.variants_of((base or row)["tag"])]:
+            out += [r["name"], *r["names"]]
+    return list(dict.fromkeys(out))
 
 
 def _drop_empty_lines(text: str) -> str:
@@ -129,17 +287,28 @@ def artist_block(results: list[dict]) -> str:
     return _render(_read("fill/user/artist_block.md"), {"artists": "\n\n".join(items)})
 
 
+def _option(v: dict, base: dict) -> str:
+    """没对上服装时附给 LLM 的一个可选变体：标签（名称）：这个变体特有的服装标签。"""
+    own = {a["tag"] for a in base["appearance"]}
+    extra = [a["tag"].replace("_", " ") for a in v["appearance"] if a["tag"] not in own and (a.get("freq") or 0) >= 0.2][:6]
+    return f"{v['tag'].replace('_', ' ')}（{v['name']}）" + (f"：{', '.join(extra)}" if extra else "")
+
+
 def character_block(results: list[dict], labels: dict) -> str:
     items = []
     for r in results:
         ch = r["character"]
         if not ch:
             continue
+        base = r.get("base")
         app = ", ".join(f"{a['tag'].replace('_', ' ')}（{round(a['freq'] * 100)}%）" if a.get("freq") is not None
                         else a["tag"].replace("_", " ") for a in ch["appearance"])
+        notes = " ".join(" ".join(x.split()) for x in (ch["notes"], base["notes"] if base else "") if x.strip())
         text = _render(_read("fill/user/character_item.md"), {
-            "name": ch["name"], "tag": ch["tag"].replace("_", " "), "series": ch["series_tag"].replace("_", " "),
-            "wiki": " ".join(ch["wiki"].split()), "appearance": app, "notes": " ".join(ch["notes"].split())})
+            "name": ch["name"], "tag": ch["tag"].replace("_", " "), "base_tag": base["tag"].replace("_", " ") if base else "",
+            "series": ch["series_tag"].replace("_", " "), "outfit": r["query"].get("outfit", ""),
+            "wiki": " ".join(ch["wiki"].split()), "appearance": app, "notes": notes,
+            "variants": "；".join(_option(v, ch) for v in r.get("options") or [])})
         items.append(_drop_empty_lines(text))
     if not items:
         return ""

@@ -137,10 +137,13 @@ def _fill(req: dict, rid: str) -> dict:
     v_fut = v_ex.submit(describe_images, vp, vm, vlevel, v_items, rid, not vision_fresh) if v_items else None
     v_ex.shutdown(wait=False)
 
-    # —— 人设匹配（可关）：描述里出现人设的名称 / 别名，或在绘图页选用了人设；本地完成，不联网、不调用 LLM ——
+    # —— 人设匹配（可关）：描述里出现人设的名称 / 别名（已有角色另外认角色库里这个角色的全部名称），
+    #    或在绘图页选用了人设；本地完成，不联网、不调用 LLM ——
     persona_entries: list[dict] = []
-    if req.get("persona_match", True):
-        persona_entries = [{**h, "outfit_id": None, "linked": False} for h in personas.match(desc)]
+    persona_on = req.get("persona_match", True)
+    if persona_on:
+        persona_entries = [{**h, "outfit_id": None, "linked": False}
+                           for h in personas.match(desc, extra_names=research.persona_names)]
         link = req.get("persona_linked") or {}
         lp = personas.get(link["id"]) if isinstance(link.get("id"), int) else None
         if lp:
@@ -150,8 +153,14 @@ def _fill(req: dict, rid: str) -> dict:
             else:
                 persona_entries.append({"persona": lp, "matched": None, "outfit_id": link.get("outfit_id"),
                                         "linked": True})
-    covered_names = {n for e in persona_entries for n in personas.names_norm(e["persona"])}
-    covered_tags = {t for e in persona_entries for t in personas.tags_underscore(e["persona"])}
+    def cover(p: dict) -> None:
+        covered_names.update(personas.names_norm(p), (personas.norm(n) for n in research.persona_names(p)))
+        covered_tags.update(personas.tags_underscore(p))
+
+    covered_names: set[str] = set()
+    covered_tags: set[str] = set()
+    for e in persona_entries:
+        cover(e["persona"])
 
     # —— 联网检索（可选）：识别角色与画师 → 资料库 / Danbooru；标签参考 → DanbooruSearch，两者并行 ——
     want_web, want_tags = bool(req.get("web_character")), bool(req.get("tag_reference"))
@@ -163,11 +172,25 @@ def _fill(req: dict, rid: str) -> dict:
                 try:
                     cur = current if mode == "modify" else {}
                     found, found_art, research_log["extract"] = research.extract(p, m, desc, cur, rid)
+                    # 识别出的角色名与人设模糊比对上的（「优香」→ 人设「早濑优香」），也按人设处理
+                    if persona_on:
+                        plist = personas.all_full()
+                        for q in found:
+                            if {personas.norm(q["name"]), personas.norm(q["name_en"])} & covered_names:
+                                continue
+                            hit = research.fuzzy_persona(q, plist)
+                            if hit and all(e["persona"]["id"] != hit["id"] for e in persona_entries):
+                                persona_entries.append({"persona": hit, "matched": q["name"] or q["name_en"],
+                                                        "outfit_id": None, "linked": False})
+                                cover(hit)
+                            if hit:
+                                covered_names.update({personas.norm(q["name"]), personas.norm(q["name_en"])} - {""})
                     # 已由人设提供资料的角色不再联网检索
                     found = [q for q in found if not ({personas.norm(q["name"]), personas.norm(q["name_en"])}
                                                       & covered_names)]
-                    results = [r for r in research.research_characters(found)
-                               if not (r["character"] and r["character"]["tag"] in covered_tags)]
+                    results = [r for r in research.research_characters(found, desc)
+                               if not (r["character"] and ({r["character"]["tag"], (r.get("base") or {}).get("tag")}
+                                                           & covered_tags))]
                     artists = research.research_artists(found_art)
                 except (client.LLMError, WebError, ValueError) as e:
                     if retry.is_cancelled(rid):
@@ -188,7 +211,10 @@ def _fill(req: dict, rid: str) -> dict:
                     warnings.append(f"未在 Danbooru 找到{kind}「{who}」")
                 elif r["status"] == "error":
                     warnings.append(f"检索{kind}「{who}」失败：{r['error']}")
-        brief = lambda lst: [{"query": r["query"], "status": r["status"], "tag": (r["character"] or {}).get("tag")}
+        brief = lambda lst: [{"query": r["query"], "status": r["status"], "tag": (r["character"] or {}).get("tag"),
+                              **({"variant_of": r["base"]["tag"]} if r.get("base") else {}),
+                              **({"fuzzy": r["fuzzy"]} if r.get("fuzzy") else {}),
+                              **({"options": [v["tag"] for v in r["options"]]} if r.get("options") else {})}
                              for r in lst]
         research_log.update(found=found, found_artists=found_art, results=brief(results), artists=brief(artists),
                             tags=(tags or {}).get("results"), tag_error=tag_error)
