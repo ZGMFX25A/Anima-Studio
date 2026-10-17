@@ -18,6 +18,7 @@ from .generation import TRACKER, FormError, load_json
 from .llm import client as llm_client
 from .llm import fill as llm_fill
 from .llm import imgsplit as llm_imgsplit
+from .llm import outfit_names as llm_outfit_names
 from .llm import persona as llm_persona
 from .llm import retry as llm_retry
 from .llm import store as llm_store
@@ -486,6 +487,33 @@ def _detail(kind: str, r: dict | None):
         r["members"] = [{**m, "id": rows[m["tag"]]["id"] if rows[m["tag"]] else None,
                          "name": rows[m["tag"]]["name"] if rows[m["tag"]] else ""} for m in r["members"]]
     return r
+
+
+@app.get("/api/library/outfits/pick")
+def library_outfit_pick():
+    """绘图页服装检索栏：服装库的全部服装（名称、名称映射、别名、标签、作品与作品中文名、常见标签），页面上本地筛选。"""
+    sn = OUTFITS.series_names()
+    return {"items": [{"id": r["id"], "tag": r["tag"], "name": r["name"], "names": r["names"],
+                       "other_names": r["other_names"], "series_tag": r["series_tag"],
+                       "series_names": sn.get(r["series_tag"], []), "post_count": r["post_count"],
+                       "appearance": [a["tag"] for a in r["appearance"]]}
+                      for r in sorted(OUTFITS.all_rows(), key=lambda r: (r["series_tag"], -r["post_count"]))]}
+
+
+@app.get("/api/library/outfits/cn-names")
+def library_outfit_cn_pending():
+    """还没有中文名的服装 / 作品数（服装库页「用 AI 起中文名」按钮旁显示）。"""
+    d = llm_outfit_names.pending()
+    return {"outfits": len(d["outfits"]), "series": len(d["series"])}
+
+
+@app.post("/api/library/outfits/cn-names")
+def library_outfit_cn_names(data: dict = Body(...)):
+    """用 AI 给还没有中文名的服装起中文名（手动改过名称的不动），顺带给作品起中文名与常用简称。"""
+    try:
+        return llm_outfit_names.run(data)
+    except llm_client.LLMError as e:
+        return err(502, "LLM_ERROR", str(e))
 
 
 @app.get("/api/library/{kind}/{rid}")

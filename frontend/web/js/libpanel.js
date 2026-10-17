@@ -1,7 +1,7 @@
 // 菜单 → 角色库 / 画师库 / 服装库：搜索、查看与手动纠正联网检索到的资料；手动新增。三个库共用这一套界面。
 import { api } from './api.js';
 import { $, el, fill, toast, toastError, confirmDialog, modal, fmtTime } from './ui.js';
-import { on, emit } from './store.js';
+import { app, on, emit } from './store.js';
 import { clearArtistHints } from './artistpick.js';
 
 const FIELD_ZH = { name: '名称', tag: '标准标签', series_tag: '作品', wiki: '简介', appearance: '外貌标签', notes: '补充说明' };
@@ -79,6 +79,8 @@ export function createLibrary(kind) {
     varView: 'menu', open: new Set(), menu: null,
     // 详情页：family = 本体 + 已缓存的变体（顶部切换标签）；familyAll = 显示全部（本体与变体从上到下排开）；snap / syncEdit 判断未保存的修改
     family: null, familyAll: false, snap: '', syncEdit: null, famToken: null };
+  const ai = { models: null, key: '', busy: null, pending: null };     // 服装库「用 AI 起中文名」
+  const AI_KEY = 'anima.outfits.llm';
   try { if (localStorage.getItem(VAR_VIEW_KEY) === 'inline') st.varView = 'inline'; } catch { /* 忽略 */ }
   try { st.familyAll = localStorage.getItem(FAMILY_ALL_KEY) === '1'; } catch { /* 忽略 */ }
   on(cfg.openEvent, (id) => openEditor(id));
@@ -265,6 +267,7 @@ export function createLibrary(kind) {
           el('span', { class: 'muted small' }, ADD_MODES.find(m => m[0] === (fuzzy ? 'fuzzy' : 'direct'))[2])),
         el('div', { class: 'lib-add-row' }, ...(fuzzy ? [fzName, fzSeries, fzBtn] : [fetchName, fetchBtn])),
         fuzzy ? fuzzyResults(doImport) : null),
+      cfg.members ? aiNameBar() : null,
       el('div', { class: 'lib-bar' }, search, el('span', { class: 'grow' }), ...varTools),
       el('div', { class: 'clist' },
         el('div', { class: `crow head${cfg.full ? '' : ' four'}` }, el('span', {}, '名称'), el('span', {}, '标准标签'),
@@ -583,6 +586,61 @@ export function createLibrary(kind) {
         cfg.full ? field(cfg.members ? '常见标签' : '外貌标签', 'appearance', appBox, cfg.appHint) : null,
         field('补充说明', 'notes', notes, cfg.full ? '发给 LLM，优先于外貌标签' : '发给 LLM'),
         cfg.full ? field('简介', 'wiki', wiki, '来自 Danbooru wiki') : null));
+  }
+
+  // 服装库：用 AI 给还没有中文名的服装起中文名（顺带起作品的中文名与简称），绘图页的服装检索栏就能用中文搜到；手动改过名称的不动
+  async function aiLoad() {
+    if (!ai.models) {
+      try { ai.models = await api.get('/api/llm/enabled'); } catch { ai.models = []; }
+      let saved = '';
+      try { saved = localStorage.getItem(AI_KEY) || ''; } catch { /* 忽略 */ }
+      ai.key = [saved, app.form?.llm?.model_key].find(k => ai.models.some(m => m.key === k)) || ai.models[0]?.key || '';
+    }
+    try { ai.pending = await api.get(`${base}/cn-names`); } catch { ai.pending = null; }
+  }
+
+  function aiNameBar() {
+    const box = el('section', { class: 'lib-add lib-ai' });
+    const cancel = () => {
+      ai.busy?.ctl.abort();
+      api.post('/api/llm/cancel', { request_id: ai.busy?.rid }).catch(() => {});
+    };
+    const run = async () => {
+      const m = ai.models?.find(x => x.key === ai.key);
+      if (!m) return;
+      ai.busy = { ctl: new AbortController(), rid: Math.random().toString(36).slice(2) + Date.now().toString(36) };
+      draw();
+      try {
+        const r = await api.post(`${base}/cn-names`, { provider_id: m.provider_id, model_id: m.model_id, request_id: ai.busy.rid },
+          { signal: ai.busy.ctl.signal });
+        toast(`已起好中文名：${r.named} 套服装、${r.series} 个作品${r.partial ? '；中途出错只做了一部分，可以再点一次' : ''}`,
+          r.partial ? 'warn' : 'ok', 5000);
+      } catch (e) { if (e.name !== 'AbortError') toastError(e); }
+      ai.busy = null;
+      await aiLoad();
+      if (st.view === 'list') load();
+    };
+    const draw = () => {
+      const ms = ai.models || [];
+      const p = ai.pending;
+      const n = p ? p.outfits + p.series : 0;
+      const sel = el('select', { disabled: !ms.length || !!ai.busy, onchange: (e) => {
+        ai.key = e.target.value;
+        try { localStorage.setItem(AI_KEY, ai.key); } catch { /* 忽略 */ }
+      } }, ms.length ? ms.map(m => el('option', { value: m.key, selected: m.key === ai.key }, `${m.provider} · ${m.label}`))
+        : el('option', { value: '' }, '未配置（菜单 → LLM）'));
+      fill(box, el('div', { class: 'lib-add-head' },
+        el('b', {}, '中文名'),
+        el('span', { class: 'muted small' }, !p ? '' : n ? `${p.outfits} 套服装、${p.series} 个作品还没有中文名` : '都有中文名了'),
+        el('span', { class: 'grow' }), sel,
+        ai.busy ? [el('span', { class: 'muted small' }, '正在起名…'), el('button', { class: 'btn small ghost', onclick: cancel }, '取消')]
+          : el('button', { class: 'btn small accent', disabled: !ms.length || !n, onclick: run,
+            title: '给还没有中文名的服装起中文名（手动改过名称的不动），顺带给作品起中文名和常用简称；绘图页的服装检索栏就能用中文搜到' },
+          '用 AI 起中文名')));
+    };
+    draw();
+    if (!ai.busy) aiLoad().then(draw);
+    return box;
   }
 
   // 服装详情的「常穿的角色」：在角色库里的可点开

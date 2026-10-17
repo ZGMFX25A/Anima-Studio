@@ -446,7 +446,7 @@ def outfit_profile(tag: str, post_count: int | None = None, page: dict | None = 
         page = _get(f"/wiki_pages/{tag}.json") or {}
     d = _get("/related_tag.json", {"query": tag, "limit": 100}) or {}
     stop = _stoplist()
-    general, members, copyright_ = [], [], ""
+    general, members, copys = [], [], []
     for x in d.get("related_tags", []):
         t, f = (x.get("tag") or {}), round(float(x.get("frequency") or 0), 2)
         name, cat = t.get("name"), t.get("category")
@@ -456,8 +456,11 @@ def outfit_profile(tag: str, post_count: int | None = None, page: dict | None = 
             general.append({"tag": name, "freq": f})
         elif cat == CAT_CHARACTER and f >= 0.05:
             members.append({"tag": name, "freq": f})
-        elif cat == CAT_COPYRIGHT and f >= 0.3 and not copyright_:
-            copyright_ = name
+        elif cat == CAT_COPYRIGHT and f >= 0.3:
+            copys.append((name, f))
+    # 作品：比例最高的；几乎一样高时取更具体的（idolmaster 与 gakuen_idolmaster 都是 100% → gakuen_idolmaster）
+    top = [t for t, f in copys if f >= max((f for _, f in copys), default=0) - 0.05]
+    copyright_ = next((t for t in top if any(u != t and u in t for u in top)), top[0] if top else "")
     m = re.search(r"_\(([^()]+)\)$", tag)
     series = m.group(1) if m and (not copyright_ or _same_series(copyright_, m.group(1))) else copyright_
     have = {x["tag"] for x in members}
