@@ -321,8 +321,20 @@ function renderResearch(r) {
     el('span', { class: 'grow' }),
     el('a', { class: 'small', href: `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(o.tag)}`, target: '_blank', rel: 'noreferrer' }, 'Danbooru'),
     el('button', { class: 'btn ghost small', onclick: () => { emit('goto', 'menu'); emit('goto-panel', 'outfits'); emit('outfits-open', o.id); } }, '在服装库中编辑'));
-  const rows = [...pers.map(personaRow), ...chars.map(c => row(c, 'characters')), ...outs.map(outfitRow), ...arts.map(c => row(c, 'artists'))];
-  if (r.characters && !chars.length && !arts.length) rows.push(el('div', { class: 'muted small' }, '描述中没有识别到作品角色或画师'));
+  const missRow = (o) => el('div', { class: 'rs-row' },
+    el('span', { class: 'badge' }, '服装'),
+    el('span', { class: `badge ${o.error ? 'bad' : 'warn'}` }, o.error ? '出错' : '未找到'),
+    el('span', { class: 'rs-name' }, o.name),
+    o.wearer ? el('span', { class: 'muted small' }, `${o.wearer} 穿`) : null,
+    o.series ? el('span', { class: 'muted small' }, o.series) : null,
+    el('span', { class: 'grow' }),
+    el('button', { class: 'btn ghost small', title: '去服装库用「模糊搜索」按作品列出全部服装，挑一个导入；下次在名称映射里加上这个写法就能直接认出',
+      onclick: () => { emit('goto', 'menu'); emit('goto-panel', 'outfits'); } }, '去服装库找'),
+    o.error ? el('div', { class: 'rs-alt small', style: { color: 'var(--danger)' } }, o.error) : null);
+  const misses = r.outfit_misses || [];
+  const rows = [...pers.map(personaRow), ...chars.map(c => row(c, 'characters')), ...outs.map(outfitRow), ...misses.map(missRow),
+    ...arts.map(c => row(c, 'artists'))];
+  if (r.characters && !chars.length && !arts.length && !outs.length && !misses.length) rows.push(el('div', { class: 'muted small' }, '描述中没有识别到作品角色、作品服装或画师'));
   let tagNode = null;
   if (tags) {
     const meta = tags.error ? tags.error

@@ -15,6 +15,20 @@
         "additionalProperties": false
       }
     },
+    "outfits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "name_en": {"type": "string"},
+          "series": {"type": "string"},
+          "wearer": {"type": "string"}
+        },
+        "required": ["name", "name_en", "series", "wearer"],
+        "additionalProperties": false
+      }
+    },
     "artists": {
       "type": "array",
       "items": {
@@ -28,6 +42,6 @@
       }
     }
   },
-  "required": ["characters", "artists"],
+  "required": ["characters", "outfits", "artists"],
   "additionalProperties": false
 }

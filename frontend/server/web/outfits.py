@@ -201,6 +201,49 @@ def pick(base: dict, outfit: str, texts: list[str], fetch: bool = True) -> tuple
     return None, rows[:OPTIONS]
 
 
+def resolve(q: dict) -> tuple[dict | None, str]:
+    """识别出的作品服装（{name, name_en, series, wearer}，不管谁穿）→ (服装库条目, 联网出错信息)。
+
+    先查服装库：名称映射精确命中，或名字整个出现在写法里（有作品时只认这个作品的）；
+    再查 Danbooru（不要求标签带作品括号，但要属于这个作品），存入服装库，原文写法记进名称映射，下次直接命中。
+    """
+    names = [n for n in (q["name"], q["name_en"]) if n]
+    for n in names:
+        row = OUTFITS.lookup(n)
+        if row:
+            return OUTFITS.get(row["id"]), ""
+    s = danbooru._skey(q.get("series", ""))
+    texts = [k for k in (_text_key(n) for n in names) if k]
+    generic = OUTFITS.generic_tags()
+    best, best_len = None, 0
+    for row in OUTFITS.all_rows():
+        if s and s.isascii() and row["series_tag"] and not danbooru._same_series(s, row["series_tag"]):
+            continue
+        for cue in cues(row, generic):
+            if any(cue in t for t in texts) and len(cue) > best_len:
+                best, best_len = row, len(cue)
+    if not best:
+        try:
+            cands = danbooru.find_named_outfit(q["name"], q["name_en"], q.get("series", ""))
+        except WebError as e:
+            return None, str(e)
+        if not cands:
+            return None, ""
+        c = cands[0]
+        best = OUTFITS.get_by_tag(c["tag"])
+        if not best:
+            try:
+                prof = fetch_profile(c["tag"], c["post_count"])
+            except WebError as e:
+                return None, str(e)
+            prof["series_tag"] = c["series_tag"] or prof["series_tag"]
+            best = OUTFITS.save_from_danbooru(prof, "", [])
+            log.info("服装库：「%s」→ %s，已存入", q["name"] or q["name_en"], c["tag"])
+    if q["name"]:
+        OUTFITS.add_names(best["id"], [q["name"]])
+    return OUTFITS.get(best["id"]), ""
+
+
 def scan(description: str, skip: set[int]) -> list[dict]:
     """描述里直接写了服装库里某套服装的名字（没有跟着角色，如「穿イタズラ☆ストレート的女孩」）。只查本地。"""
     d = _key(description)

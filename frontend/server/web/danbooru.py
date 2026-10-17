@@ -469,6 +469,33 @@ def outfit_profile(tag: str, post_count: int | None = None, page: dict | None = 
             "wiki": clean_dtext(page.get("body") or ""), "appearance": general[:APPEARANCE_TOP], "members": members[:16]}
 
 
+def find_named_outfit(name: str, name_en: str, series: str) -> list[dict]:
+    """描述里点名的作品服装（「初星学园校服」→ hatsuboshi_gakuen_school_uniform，这类学校制服常常不带作品括号）。
+
+    补全（英文写法、原文；日文别名也能命中）→ 核对属于这个作品：标签括号里的作品对得上，或共现作品 ≥30%；
+    没给作品时只要属于某个作品（school_uniform 这类通用标签不属于任何作品，排除）。返回 [{tag, post_count, series_tag}]。
+    """
+    keys = series_keys(series)
+    en = (name_en or "").replace("_", " ").strip()
+    cands: dict[str, dict] = {}
+    for q in dict.fromkeys(x for x in (en, (name or "").strip()) if x):
+        for c in autocomplete(q, category=CAT_GENERAL):
+            cands.setdefault(c["tag"], c)
+    # 英文写法本身就是一个标签时只认它：school uniform 是通用标签就到此为止，不能顺着补全认成 tracen_school_uniform
+    exact = [c for c in cands.values() if en and _skey(c["tag"]) == _skey(en)]
+    out = []
+    for c in exact or sorted(cands.values(), key=lambda c: -c["post_count"])[:3]:
+        if keys and _series_hit(c["tag"], keys):
+            out.append({**c, "series_tag": next(k for k in keys if _series_hit(c["tag"], [k]))})
+            break
+        copy = [t for t, f in related(c["tag"], "copyright", 5) if f >= 0.3]
+        hit = next((t for t in copy for k in keys if _same_series(t, k)), None) if keys else (copy[0] if copy else None)
+        if hit:
+            out.append({**c, "series_tag": next((k for k in keys if _same_series(hit, k)), hit)})
+            break
+    return out
+
+
 def find_outfit(name: str) -> list[dict]:
     """服装库「直接添加」：补全（普通标签，日文名 / 英文名都能命中），带作品括号的（专门的服装）优先。"""
     cands = autocomplete(name.lstrip("@"), category=CAT_GENERAL)
