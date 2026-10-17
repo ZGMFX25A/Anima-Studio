@@ -52,6 +52,7 @@
       </button>
       <div class="card-body">
         <textarea id="llm-desc" rows="3" data-bind="llm.description" placeholder="描述你想要的画面，中英文都可以。例如：初音未来在夏日海边奔跑，傍晚逆光，胶片感"></textarea>
+        <input type="text" class="outfit-search" id="outfit-search" placeholder="服装检索：点开看服装库全部服装，可搜中文名 / 作品 / 标签；点「复制」复制标签，粘贴进上面的描述，AI 就不会认错服装">
         <div class="llm-images-row">
           <div class="dz-wrap" id="llm-images"></div>
           <div class="llm-img-side">
@@ -174,7 +175,6 @@
         <div class="field">
           <label class="fl"><b>appearance</b><i>外貌</i></label>
           <textarea rows="2" data-bind="fields.appearance" data-field="appearance" placeholder="long hair, blue hair, twintails, aqua eyes, white dress"></textarea>
-          <input type="text" class="outfit-search" id="outfit-search" placeholder="服装检索：点开看服装库全部服装，可搜中文名 / 作品 / 标签，点「复制」复制标签">
         </div>
         <div class="field">
           <label class="fl"><b>action</b><i>动作</i></label>
