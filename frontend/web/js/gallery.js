@@ -64,10 +64,10 @@ function createGallery(kind) {
       thumb,
       el('div', { class: 'gmeta', title: `seed ${it.seed}` }, el('span', {}, fmtTime(it.created_at)), el('span', {}, it.model)),
       el('div', { class: 'gbtns' },
-        el('button', { onclick: () => showPromptModal(it) }, '提示词'),
+        el('button', { title: '查看提示词与参数', onclick: () => showPromptModal(it) }, '提示词'),
         favBtn,
         el('button', { class: 'del', onclick: () => remove(it) }, '删除'),
-        el('button', { onclick: () => reuseDialog(it) }, '复用')));
+        el('button', { title: '把这张图的设置填回绘图页', onclick: () => reuseDialog(it) }, '复用')));
     favBtn.addEventListener('click', async () => {
       try {
         const r = await api.post(`/api/gallery/${it.id}/favorite`);

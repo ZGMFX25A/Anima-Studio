@@ -52,7 +52,7 @@ function draw() {
       btn('保存', 'save', () => save(draft), 'accent')),
     el('div', { class: 'svc' },
       el('div', { class: 'svc-head' }, el('h3', {}, '图片保存目录'),
-        el('div', { class: 'svc-btns' }, btn('打开目录', 'open', () => api.post('/api/storage/open').catch(toastError), 'ghost'))),
+        el('div', { class: 'svc-btns' }, btn('打开文件夹', 'open', () => api.post('/api/storage/open').catch(toastError), 'ghost'))),
       el('div', { class: 'kv' },
         el('div', {}, el('span', { class: 'k' }, '当前使用'), el('span', { class: 'v' }, s.effective)),
         el('div', {}, el('span', { class: 'k' }, '默认目录'), el('span', { class: 'v' }, s.default))),
@@ -68,11 +68,11 @@ function draw() {
     el('div', { class: 'svc' },
       el('div', { class: 'svc-head' }, el('h3', {}, '图片里的生成参数'),
         el('div', { class: 'svc-btns' },
-          btn('补写旧图', 'meta', () => migrateMeta(false)),
+          btn('补写缺少的', 'meta', () => migrateMeta(false)),
           btn('全部重写', 'meta-force', () => migrateMeta(true), 'ghost'))),
       el('div', { class: 'hint' },
         '生成的 PNG 里写有两份参数：anima_painter（本程序用，含各字段原值）与 A1111 格式的 parameters（WebUI、Civitai 等能识别）。',
-        el('br'), '「补写旧图」给历史 / 收藏 / 人设预览里还没有新格式参数的图片补上（启动时已自动执行过一次）；「全部重写」按图库记录重新写一遍。',
+        el('br'), '「补写缺少的」给历史 / 收藏 / 人设预览里还没有新格式参数的图片补上（启动时已自动执行过一次）；「全部重写」按图库记录重新写一遍。',
         el('br'), '只替换图片里的文本块，像素数据原样保留，文件修改时间不变。'),
       metaResult ? el('div', { class: 'hint' }, metaResult) : null));
 }

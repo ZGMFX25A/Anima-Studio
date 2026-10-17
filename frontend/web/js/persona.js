@@ -85,7 +85,7 @@ function drawList() {
       file,
       el('button', { class: 'btn ghost', onclick: () => file.click(),
         title: '选择人设卡图片导入（PNG，可多选；也可以是导出的 zip 或 SillyTavern 角色卡）。也可以直接把文件拖到这个页面' }, '导入人设卡'),
-      el('button', { class: 'btn ghost', id: 'pl-export', onclick: () => exportList(st, st.list.items.length) }, '导出'),
+      el('button', { class: 'btn ghost', id: 'pl-export', onclick: () => exportList(st, st.list.items.length) }, '导出人设卡'),
       el('button', { class: 'btn accent', title: '默认是原创人物；已有作品的角色把「原创人物」关掉，再用名称旁的「🔍 Danbooru」导入',
         onclick: () => openDetail('new') }, '＋ 新建人设')),
     el('div', { class: 'pl-tools' }, search, seg),
@@ -364,7 +364,7 @@ function unassignedBox() {
   };
   return el('div', { class: 'unassigned' },
     el('div', { class: 'ua-head' }, el('span', { class: 'muted small' }, `未归类标签 ${st.unassigned.length} 个（AI 没有归入外观或造型，点击加入 →）`),
-      sel, el('button', { class: 'btn ghost small', type: 'button', onclick: () => ctx.setUnassigned([]) }, '全部丢弃')),
+      sel, el('button', { class: 'btn ghost small', type: 'button', onclick: () => ctx.setUnassigned([]) }, '全部忽略')),
     el('div', { class: 'chips' }, st.unassigned.map(t => el('button', { class: 'chip pick', type: 'button', onclick: () => add(t) }, t))));
 }
 

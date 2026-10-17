@@ -63,7 +63,7 @@ function askConflict(info, remaining) {
       el('p', {}, `人设卡${info.source === 'sillytavern' ? '（SillyTavern）' : ''}「${info.name}」与已有人设「${info.conflict.name}」的${info.conflict.by === 'name' ? '名称' : '别名'}重复。`),
       el('ul', {},
         el('li', {}, el('b', {}, '覆盖：'), `「${info.conflict.name}」的资料换成卡里的（卡里有封面时封面也换掉），已有的预览图保留`),
-        el('li', {}, el('b', {}, '另存为新：'), `改名为「${info.suggested_name}」，原有人设不变`),
+        el('li', {}, el('b', {}, '另存为新人设：'), `改名为「${info.suggested_name}」，原有人设不变`),
         el('li', {}, el('b', {}, '跳过：'), '不导入这张')),
       remaining ? el('label', { class: 'switch-row' }, all, el('span', { class: 'switch' }),
         el('span', {}, `后面再遇到重名也这样处理（还剩 ${remaining} 张）`)) : null);
@@ -72,7 +72,7 @@ function askConflict(info, remaining) {
       onClose: (v) => resolve({ action: v || 'skip', all: !!v && all.checked }),
       actions: [
         { label: '跳过', kind: 'ghost', value: 'skip' },
-        { label: '另存为新', value: 'rename' },
+        { label: '另存为新人设', value: 'rename' },
         { label: '覆盖', kind: 'danger', value: 'overwrite' },
       ],
     });

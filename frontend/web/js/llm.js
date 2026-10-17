@@ -146,8 +146,8 @@ function refresh() {
   fresh.classList.toggle('on', freshVision && canFresh);
   fresh.setAttribute('aria-pressed', String(freshVision && canFresh));
   fresh.title = !canFresh ? '没有要识图的图片（灵感图、已开启的人物 / 动作参考图）'
-    : freshVision ? '已开启：下一次生成 / 修改不用识图缓存，全部图片重新识图；成功后自动关闭。再点一下取消'
-    : '下一次生成 / 修改不用识图缓存，全部图片重新识图（新结果会替换缓存）；成功后自动关闭';
+    : freshVision ? '已开启：下一次填写 / 修改不用识图缓存，全部图片重新识图；成功后自动关闭。再点一下取消'
+    : '下一次填写 / 修改不用识图缓存，全部图片重新识图（新结果会替换缓存）；成功后自动关闭';
   renderPersonaLink();
   const disabled = !m || !!controller;
   $('#llm-generate').disabled = disabled;

@@ -67,7 +67,7 @@ function showDialog(res, filename) {
   const notes = [];
   let keepSeed = null;
   if (anima) {
-    if (rec) notes.push(el('div', { class: 'hint' }, `本机图库里有这张图的记录（#${rec.id}）：会像「复用」一样恢复全部设置，包括人物 / 动作参考图。`));
+    if (rec) notes.push(el('div', { class: 'hint' }, `本机图库里有这张图的记录（#${rec.id}）：会像「复用设置」一样恢复全部设置，包括人物 / 动作参考图。`));
     else {
       const f = res.form || {};
       const used = [];
@@ -92,7 +92,7 @@ function showDialog(res, filename) {
     mode = llm && saved !== 'rule' ? 'ai' : 'rule';
     const seg = el('span', { class: 'seg small' },
       el('button', { 'data-v': 'ai', disabled: !llm, title: llm ? '' : '没有可用的 LLM（菜单 → LLM 中勾选模型）' }, llm ? `AI 拆分（${llm.label}）` : 'AI 拆分（未配置 LLM）'),
-      el('button', { 'data-v': 'rule' }, '规则粗分'));
+      el('button', { 'data-v': 'rule', title: '不用 LLM，按常见写法快速拆分，可能不够准' }, '按规则拆分'));
     const render = () => [...seg.children].forEach(b => b.classList.toggle('on', b.dataset.v === mode));
     seg.addEventListener('click', (e) => {
       const b = e.target.closest('button');

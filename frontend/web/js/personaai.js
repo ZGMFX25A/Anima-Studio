@@ -160,8 +160,8 @@ export function openDanbooru(ctx) {
   const split = el('input', { type: 'checkbox', checked: true });
   const importBtn = el('button', { class: 'btn accent', disabled: true }, '导入');
   const st = { picked: null, vars: [], varsAt: null, checked: new Set(), ctl: null, fuzzy: false };
-  // 两种查法：按标签 / 名字直接补全（原来的方式）；模糊搜索（名字可只写一部分 + 作品）
-  const modeBtns = [['标签 / 名字', false], ['模糊搜索', true]].map(([label, fz]) =>
+  // 两种查法：直接搜索（按名字 / 标签补全，原来的方式）；模糊搜索（名字可只写一部分 + 作品）
+  const modeBtns = [['直接搜索', false], ['模糊搜索', true]].map(([label, fz]) =>
     el('button', { class: fz === st.fuzzy ? 'on' : '', onclick: () => setMode(fz) }, label));
   const setMode = (fz) => {
     st.fuzzy = fz;
@@ -209,7 +209,7 @@ export function openDanbooru(ctx) {
   }
 
   async function loadVariants(c, refresh = false) {
-    fill(varBox, el('div', { class: 'muted small' }, refresh ? '重新获取造型变体…' : '查找造型变体…'));
+    fill(varBox, el('div', { class: 'muted small' }, refresh ? '正在更新变体列表…' : '查找造型变体…'));
     let r = { items: [], cached_at: null };
     try { r = await api.post('/api/personas/danbooru/variants', { tag: c.tag, refresh }); } catch (e) { toastError(e); }
     if (st.picked !== c) return;
@@ -219,8 +219,8 @@ export function openDanbooru(ctx) {
       el('b', {}, '造型变体'),
       el('span', { class: 'muted' }, '勾选的各成一套造型，变体标签写进它的「专属角色标签」，最多 6 个'),
       el('span', { class: 'grow' }),
-      r.cached_at ? el('span', { class: 'muted' }, `列表来自角色库（${fmtTime(r.cached_at)}）`) : null,
-      r.cached_at ? el('button', { class: 'btn small ghost', onclick: () => loadVariants(c, true) }, '刷新') : null);
+      r.cached_at ? el('span', { class: 'muted' }, `列表来自角色库，更新于 ${fmtTime(r.cached_at)}`) : null,
+      r.cached_at ? el('button', { class: 'btn small ghost', onclick: () => loadVariants(c, true) }, '更新列表') : null);
     fill(varBox, st.vars.length ? [head,
       el('div', { class: 'db-varlist' }, st.vars.map(v => el('label', { class: 'checkline' },
         el('input', { type: 'checkbox', checked: st.checked.has(v.tag), onchange: (e) => {
@@ -230,7 +230,7 @@ export function openDanbooru(ctx) {
           } else st.checked.delete(v.tag);
         } }),
         el('span', { class: 'mono' }, v.text), el('span', { class: 'muted small' }, `${v.post_count} 张`),
-        v.in_library ? el('span', { class: 'badge ok small-badge' }, '已缓存') : null)))]
+        v.in_library ? el('span', { class: 'badge ok small-badge' }, '已在角色库') : null)))]
       : [head, el('div', { class: 'muted small' }, '这个角色在 Danbooru 上没有造型变体')]);
   }
 
@@ -286,7 +286,7 @@ function chooseMode() {
       body: '导入的基础外观、外观描述与造型怎么处理？（之后都可以撤销）',
       actions: [
         { label: '覆盖', sub: '用导入结果替换基础标签、外观描述与造型', kind: 'accent', value: 'overwrite' },
-        { label: '只填空的', sub: '已有内容保留；新的造型追加在后面', value: 'merge' },
+        { label: '保留已有内容', sub: '已有内容保留；新的造型追加在后面', value: 'merge' },
         { label: '取消', kind: 'ghost', value: null },
       ],
     });
