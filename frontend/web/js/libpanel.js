@@ -28,8 +28,8 @@ export const LIB_CONFIG = {
     fetchPh: '服装名或标签，如 イタズラ☆ストレート / mischievous straight uniform', searchPh: '在服装库中搜索：名字、标签或作品',
     fetchHint: '输入服装名（日文 / 英文）或标签，直接添加最匹配的一个',
     notesPh: '原样发给 LLM，优先级最高。例如：上衣是露脐短款，袖子是分离袖',
-    hint: 'Danbooru 上单独建了标签、几个角色共用的服装（活动服装、偶像团体 / 学校制服等）。和造型变体的区别：变体是角色标签，写进 character；这里是普通标签，写进 appearance。AI 填写用到某个作品的角色时，这个作品的服装（20 张图以上）会自动存进来。描述里写了服装的名字就直接用；对不上名字时附给 AI 参考，只有明确指那一套（如「优香的偶像服」「活动里那套」）才用，只说「偶像服」按通用的写。',
-    empty: '服装库还是空的。AI 填写用到作品角色时会自动存入这个作品的服装；也可以在上面添加，或用「模糊搜索」列出某个作品的全部服装。',
+    hint: 'Danbooru 上单独建了标签、几个角色共用的服装（活动服装、偶像团体 / 学校制服等）。和造型变体的区别：变体是角色标签，写进 character；这里是普通标签，写进 appearance。这里只存用到的那套：描述里写了名字的、AI 从可选项里选用的、在这里添加的。描述里写了服装的名字就直接用；对不上名字时把这个作品的服装附给 AI 参考，只有明确指那一套（如「优香的偶像服」「活动里那套」）才用，只说「偶像服」按通用的写。',
+    empty: '服装库还是空的。AI 填写用到某套作品服装时会存进来；也可以在上面添加，或用「模糊搜索」列出某个作品的全部服装挑一套。',
     fuzzyHint: '作品必填；服装名可以不写或只写个说法（如 偶像服），对不上名字时列出这个作品的全部服装，选一个导入',
     fuzzyNamePh: '服装名或说法（可选），如 偶像服', appHint: '百分比 = 穿这套服装的图片中出现的比例，混有常穿它的角色本身的外貌',
   },
@@ -544,7 +544,7 @@ export function createLibrary(kind) {
     const del = async () => {
       const msg = c.parent_tag
         ? `「${c.name}」及其名称映射会从${cfg.title}删除；以后不会再自动存回来；需要时在本体的「造型变体」里点「存入」。`
-        : cfg.members ? `「${c.name}」及其名称映射会从${cfg.title}删除；以后不会再自动存回来；需要时用「模糊搜索」或「直接添加」加回来。`
+        : cfg.members ? `「${c.name}」及其名称映射会从${cfg.title}删除；不影响 AI 填写认服装，下次用到时会重新存进来。`
         : `「${c.name}」${nVar ? `和它的 ${nVar} 个造型变体` : ''}及名称映射会从${cfg.title}删除；下次检索会重新从 Danbooru 获取。`;
       if (!await confirmDialog(`删除这个${c.parent_tag ? '变体' : cfg.noun}？`, msg, '删除', true)) return;
       try { await api.del(`${base}/${c.id}`); clearArtistHints(); toast('已删除', 'ok'); st.view = 'list'; load(); }

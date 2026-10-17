@@ -318,6 +318,11 @@ def _fill(req: dict, rid: str) -> dict:
         warnings.append(f"原创人物的名称不是角色标签，已从 character 去掉：{'、'.join(removed)}")
     if not any(fields[k] for k in FIELD_NAMES if k not in ("quality_meta_year_safe", "neg")):
         warnings.append("LLM 返回的字段几乎全是空的，可能悄悄拒绝了这个请求，可以换个模型试试")
+    # 服装库只存用到的那套：AI 从「可选的作品服装」里选用了哪套，就把哪套存进去
+    chosen = research.chosen_outfits(results, fields["appearance"], outfit_entries) if results else []
+    if chosen:
+        outfit_entries = outfit_entries + chosen
+        log["outfits_chosen"] = [e["outfit"]["tag"] for e in chosen]
     log["result"] = fields
     log["warnings"] = warnings
     _write_log(log)

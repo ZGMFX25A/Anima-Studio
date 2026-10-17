@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS outfit_names (
     outfit_id INTEGER NOT NULL REFERENCES outfits(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_outfit_names ON outfit_names(outfit_id);
--- 作品服装目录：某个作品在 Danbooru 上的服装标签列表（items = [{tag, post_count, removed?}]）
+-- 作品服装目录（缓存，不是服装库）：某个作品在 Danbooru 上的服装标签列表
+-- items = [{tag, post_count, other_names, wiki, members, generic, appearance?, related_members?, profiled_at?}]
 CREATE TABLE IF NOT EXISTS outfit_series (
     series_tag TEXT PRIMARY KEY,
     items TEXT NOT NULL DEFAULT '[]',
@@ -493,25 +494,25 @@ class OutfitLibrary(Library):
             return {x["tag"] for (items,) in c.execute("SELECT items FROM outfit_series")
                     for x in json.loads(items) if x.get("generic")}
 
+    _PROFILE_KEYS = ("appearance", "related_members", "profiled_at")     # 目录条目在后台补的常见标签与常穿的角色
+
     def set_catalog(self, series: str, items: list[dict]) -> None:
-        """保存作品服装目录（保留用户删除过的标记）。"""
+        """保存作品服装目录（重新取目录时，已补好的常见标签与常穿的角色沿用）。"""
         with _lock, _conn() as c:
             r = c.execute("SELECT items FROM outfit_series WHERE series_tag = ?", (series,)).fetchone()
-            removed = {x["tag"] for x in json.loads(r["items"]) if x.get("removed")} if r else set()
-            items = [{**x, **({"removed": True} if x["tag"] in removed else {})} for x in items]
+            old = {x["tag"]: x for x in json.loads(r["items"])} if r else {}
+            items = [{**x, **{k: old[x["tag"]][k] for k in self._PROFILE_KEYS if k in old.get(x["tag"], {})}}
+                     for x in items]
             c.execute("INSERT OR REPLACE INTO outfit_series (series_tag, items, fetched_at) VALUES (?,?,?)",
                       (series, json.dumps(items, ensure_ascii=False), time.time()))
 
-    def delete(self, rid: int) -> bool:
-        """单独删除的服装记在作品目录里，后台不再自动存回来（「添加」「导入」等明确操作仍可加回）。"""
+    def update_catalog_item(self, series: str, tag: str, fields: dict) -> None:
         with _lock, _conn() as c:
-            r = c.execute(f"SELECT tag, series_tag FROM {self.table} WHERE id = ?", (rid,)).fetchone()
-            s = c.execute("SELECT items FROM outfit_series WHERE series_tag = ?", (r["series_tag"],)).fetchone() if r else None
-            if s:
-                items = [{**x, "removed": True} if x["tag"] == r["tag"] else x for x in json.loads(s["items"])]
+            r = c.execute("SELECT items FROM outfit_series WHERE series_tag = ?", (series,)).fetchone()
+            if r:
+                items = [{**x, **fields} if x["tag"] == tag else x for x in json.loads(r["items"])]
                 c.execute("UPDATE outfit_series SET items = ? WHERE series_tag = ?",
-                          (json.dumps(items, ensure_ascii=False), r["series_tag"]))
-            return c.execute(f"DELETE FROM {self.table} WHERE id = ?", (rid,)).rowcount > 0
+                          (json.dumps(items, ensure_ascii=False), series))
 
 
 CHARACTERS = Library("characters", "names", "character_id", auto=("series_tag", "wiki", "appearance"),

@@ -1,7 +1,9 @@
 """服装库：Danbooru 单独建的服装标签（普通标签，不挂在角色下，几个角色共用，如 mischievous_straight_uniform_(blue_archive)）。
 
-- 作品服装目录：按作品取（3–5 次请求，CATALOG_DAYS 天内不重取）——标签括号里写着这个作品、名字或 wiki 第一句看得出是服装的普通标签，
-  连同 wiki（别名、简介、里面提到的角色）。图片 MIN_POSTS 张以上的存入服装库；常见标签与常穿的角色每套再查 1 次（后台）。
+- 作品服装目录（只是缓存，不进服装库）：按作品取（3–5 次请求，CATALOG_DAYS 天内不重取）——标签括号里写着这个作品、
+  名字或 wiki 第一句看得出是服装的普通标签，连同 wiki（别名、简介、里面提到的角色）；图片 MIN_POSTS 张以上的
+  常见标签与常穿的角色每套再查 1 次（后台），也记在目录里，供 AI 填写的可选项用。
+- 服装库只存用到的那套（用户定的）：名字对上的、点名查到的、AI 从可选项里选用的、在服装库里添加 / 导入的。
 - 什么时候取：角色存入 / 用到时随造型变体在后台一起补（variant_cache）；AI 填写写了服装、变体没对上、
   而这个作品的目录从没取过时当场取。
 - 认服装（AI 填写）：描述的服装写法里整个出现了这个作品某套服装的名字（名称、名称映射、Danbooru 别名、标签去掉作品与
@@ -22,7 +24,7 @@ from .danbooru import _VARIANT2
 from .library import OUTFITS
 from .net import WebError
 
-MIN_POSTS = 20        # 与造型变体一致：图片太少的共现标签不准，不自动存入
+MIN_POSTS = 20        # 与造型变体一致：图片太少的共现标签不准，后台不补
 CATALOG_DAYS = 30
 OPTIONS = 8           # 对不上名字时最多给 LLM 几套
 
@@ -102,11 +104,11 @@ def _lock(series: str) -> threading.Lock:
         return _locks.setdefault(series, threading.Lock())
 
 
-def ensure_series(series: str, save: bool = True, profiles: bool = False) -> None:
-    """作品服装目录：没取过或过期了才联网（3–5 次请求）。
+def ensure_series(series: str, profiles: bool = False) -> None:
+    """作品服装目录：没取过或过期了才联网（3–5 次请求）。目录只是缓存，不往服装库里存。
 
-    save：图片够的服装存入服装库（用户删除过的不存）。服装库的模糊搜索只列出、不存（点了哪套才存哪套）。
-    profiles：再把还没有常见标签的逐套补齐（每套 1 次请求，后台用）。
+    profiles（后台用）：目录里图片够、还没有常见标签的逐套补齐（每套 1 次请求，记在目录里），
+    以及服装库里这个作品还没补齐的条目。
     """
     if not series:
         return
@@ -114,33 +116,53 @@ def ensure_series(series: str, save: bool = True, profiles: bool = False) -> Non
         cat = OUTFITS.catalog(series)
         if not cat or time.time() - (cat["fetched_at"] or 0) > CATALOG_DAYS * 86400:
             OUTFITS.set_catalog(series, danbooru.series_outfits(series))
-            cat = OUTFITS.catalog(series)
-        if save:
-            have = OUTFITS.tags_present(x["tag"] for x in cat["items"])
-            todo = [x for x in cat["items"]
-                    if x["tag"] not in have and not x.get("removed") and x["post_count"] >= MIN_POSTS]
-            for x in todo:
-                _save_item(x, series)
-            if todo:
-                log.info("服装库：%s 的 %d 套服装已存入", series, len(todo))
     if profiles:
+        for x in (OUTFITS.catalog(series) or {}).get("items") or []:
+            if x["post_count"] >= MIN_POSTS and not x.get("profiled_at"):
+                prof = danbooru.outfit_profile(x["tag"], x["post_count"], page={"other_names": [], "body": ""})
+                OUTFITS.update_catalog_item(series, x["tag"], {"appearance": prof["appearance"],
+                                                               "related_members": prof["members"],
+                                                               "profiled_at": time.time()})
         for row in OUTFITS.of_series(series):
             if row["fetched_at"] is None and row["source"] == "danbooru":
                 save_profile(row)
 
 
+def _members(x: dict) -> list[dict]:
+    """目录条目的常穿角色：共现（有比例）+ wiki 里提到的（比例为 None）。"""
+    out = list(x.get("related_members") or [])
+    have = {m["tag"] for m in out}
+    return out + [{"tag": t, "freq": None} for t in x.get("members") or [] if t not in have]
+
+
 def _save_item(x: dict, series: str) -> dict:
-    """目录里的一套存入服装库（常见标签与常穿的角色之后补）。"""
-    return OUTFITS.save_from_danbooru({**x, "series_tag": series, "appearance": [], "fetched_at": None,
-                                       "members": [{"tag": t, "freq": None} for t in x["members"]]}, _phrase(x["tag"]), [])
+    """目录里的一套存入服装库（用到时才存）；后台已补好的常见标签一起存，没补好的之后再补。"""
+    return OUTFITS.save_from_danbooru({**x, "series_tag": series, "appearance": x.get("appearance") or [],
+                                       "members": _members(x), "fetched_at": x.get("profiled_at")}, _phrase(x["tag"]), [])
 
 
 def _unsaved(series: str, have: set[str]) -> list[dict]:
-    """目录里还没存入服装库的（图片不到 MIN_POSTS 张；用户删除过的不算），按服装库条目的样子给出（id 为 None）。"""
+    """目录里还没存入服装库的，按服装库条目的样子给出（id 为 None，item 是目录条目）。"""
     return [{"id": None, "tag": x["tag"], "name": _phrase(x["tag"]), "names": [], "series_tag": series,
              "post_count": x["post_count"], "other_names": x.get("other_names") or [], "wiki": x.get("wiki") or "",
-             "appearance": [], "members": [{"tag": t, "freq": None} for t in x.get("members") or []], "item": x}
-            for x in (OUTFITS.catalog(series) or {}).get("items") or [] if not x.get("removed") and x["tag"] not in have]
+             "appearance": x.get("appearance") or [], "members": _members(x), "item": x, "edited": []}
+            for x in (OUTFITS.catalog(series) or {}).get("items") or [] if x["tag"] not in have]
+
+
+def save_used(o: dict) -> dict:
+    """用到了这套（名字对上，或 AI 从可选项里选用）：还没在服装库里就存入；常见标签没补好的在后台补。"""
+    if o.get("id"):
+        return OUTFITS.get(o["id"]) or o
+    row = OUTFITS.get_by_tag(o["tag"]) or _save_item(o["item"], o["series_tag"])
+    if row["fetched_at"] is None:
+        def later():
+            try:
+                save_profile(row)
+            except WebError as e:
+                log.info("服装库：取 %s 的常见标签失败（%s），下次再补", row["tag"], e)
+        threading.Thread(target=later, name="outfit-profile", daemon=True).start()
+    log.info("服装库：用到了 %s，已存入", row["tag"])
+    return row
 
 
 def save_profile(row: dict) -> dict:
@@ -168,7 +190,7 @@ def pick(base: dict, outfit: str, texts: list[str], fetch: bool = True) -> tuple
 
     texts：服装原文；没写服装时是描述里这个角色所在的那几句（只认名字，不给可选项）。
     fetch：这个作品的目录从没取过时当场取（只在写了服装时）。
-    目录里图片不到 MIN_POSTS 张、没自动存入的也参与：名字对上就存入服装库（明确用到的照存），否则可以进可选项。
+    比对的是服装库里这个作品的 + 目录里的；名字对上就存入服装库（用到了），对不上的进可选项（AI 选用了才存，见 save_used）。
     """
     s = series_key(base)
     if not s or not texts:
@@ -190,10 +212,11 @@ def pick(base: dict, outfit: str, texts: list[str], fetch: bool = True) -> tuple
     if best:
         if best["id"] is None:
             best = _save_item(best["item"], s)
-            try:
-                best = save_profile(best)
-            except WebError as e:
-                log.info("服装库：取 %s 的常见标签失败（%s），下次再补", best["tag"], e)
+            if best["fetched_at"] is None:
+                try:
+                    best = save_profile(best)
+                except WebError as e:
+                    log.info("服装库：取 %s 的常见标签失败（%s），下次再补", best["tag"], e)
         return best, []
     if not outfit:
         return None, []
@@ -269,7 +292,7 @@ def fuzzy_search(name: str, series: str) -> dict:
     errors = []
     if s:
         try:
-            ensure_series(s, save=False)       # 只列出，选中的那套由 /import 存入
+            ensure_series(s)       # 只列出，选中的那套由 /import 存入
         except WebError as e:
             errors.append(str(e))
         lib = {r["tag"]: r for r in OUTFITS.of_series(s)}

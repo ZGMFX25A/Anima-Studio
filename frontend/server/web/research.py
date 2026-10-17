@@ -230,6 +230,22 @@ def research_characters(found: list[dict], description: str = "") -> list[dict]:
     return _dedupe(results)
 
 
+def chosen_outfits(results: list[dict], appearance: str, entries: list[dict]) -> list[dict]:
+    """填写结果的 appearance 用了「可选的作品服装」里的某一套 → 存入服装库（只存用到的那套），返回新增的服装资料条目。"""
+    used = {re.sub(r"\s+", "_", t.replace("\\", "").strip().lower()) for t in appearance.split(",")}
+    have = {e["outfit"]["tag"] for e in entries}
+    out: dict[str, dict] = {}
+    for r in results:
+        for o in r.get("outfit_options") or []:
+            if o["tag"].lower() in used and o["tag"] not in have:
+                if o["tag"] not in out:
+                    out[o["tag"]] = {"outfit": outfits.save_used(o), "wearers": [], "chosen": True}
+                who = r["query"]["name"] or r["character"]["name"]
+                if who not in out[o["tag"]]["wearers"]:
+                    out[o["tag"]]["wearers"].append(who)
+    return list(out.values())
+
+
 def research_outfits(results: list[dict], description: str, found: list[dict] = ()) -> tuple[list[dict], list[dict]]:
     """服装资料块的条目 → (条目, 没找到的)。
 
@@ -423,7 +439,7 @@ def summary(results: list[dict], artists: list[dict], tags: dict | None, tag_err
         "characters": _items(results) if want_web else None,
         "outfits": [{"id": e["outfit"]["id"], "tag": e["outfit"]["tag"], "name": e["outfit"]["name"],
                      "series_tag": e["outfit"]["series_tag"], "post_count": e["outfit"]["post_count"],
-                     "wearers": e["wearers"], "edited": bool(e["outfit"]["edited"])}
+                     "wearers": e["wearers"], "edited": bool(e["outfit"]["edited"]), "chosen": bool(e.get("chosen"))}
                     for e in outfit_entries or []] if want_web else None,
         "outfit_misses": [{"name": m["query"]["name"] or m["query"]["name_en"], "series": m["query"]["series"],
                            "wearer": m["query"]["wearer"], "error": m["error"]} for m in outfit_misses or []],

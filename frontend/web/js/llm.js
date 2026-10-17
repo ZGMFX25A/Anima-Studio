@@ -314,6 +314,7 @@ function renderResearch(r) {
     el('span', { class: 'badge ok' }, '服装库'),
     el('span', { class: 'rs-name' }, o.name),
     o.wearers.length ? el('span', { class: 'muted small' }, `${o.wearers.join('、')} 穿`) : el('span', { class: 'muted small' }, '描述里直接写了名字'),
+    o.chosen ? el('span', { class: 'muted small', title: '名字没对上，AI 从可选的作品服装里按意思选用了这套，已存入服装库' }, 'AI 从可选项里选用') : null,
     el('span', { class: 'rs-tag', title: '服装标签（写进 appearance）' }, '→ ', o.tag.replace(/_/g, ' ')),
     o.series_tag ? el('span', { class: 'muted small' }, o.series_tag.replace(/_/g, ' ')) : null,
     o.post_count ? el('span', { class: 'muted small' }, `${o.post_count} 张`) : null,
