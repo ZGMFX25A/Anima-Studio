@@ -21,8 +21,9 @@ def _render(text: str, values: dict) -> str:
 
 
 def extract(p: dict, m: dict, description: str, current: dict,
-            request_id: str = "") -> tuple[list[dict], list[dict], dict]:
-    """识别描述中的作品角色与画师。思考强度用该模型的最低档（能关就关）。出错自动重试（见 llm/retry.py）。
+            request_id: str = "") -> tuple[list[dict], list[dict], list[dict], dict]:
+    """识别描述中的作品角色、作品服装与画师 → (角色, 画师, 作品服装, 日志)。
+    思考强度用该模型的最低档（能关就关）。出错自动重试（见 llm/retry.py）。
 
     current：「修改」时当前的 character / artist 字段（「生成」时为空）。
     """
@@ -33,7 +34,7 @@ def extract(p: dict, m: dict, description: str, current: dict,
     schema = json.loads(_read("search/extract_schema.json"))
     log: dict = {"level": levels[0], "user": user}
     raw, _ = retry.chat(p, m, levels[0], _read("search/extract_system.md"), [{"type": "text", "text": user}], schema,
-                        retry.json_check(("characters", "artists")), log, request_id)
+                        retry.json_check(("characters", "outfits", "artists")), log, request_id)
     log.pop("request", None)    # 完整请求体只在正式填写的日志里记
 
     def items(key: str, fields: tuple, n: int) -> list[dict]:
@@ -46,7 +47,7 @@ def extract(p: dict, m: dict, description: str, current: dict,
         return out[:n]
 
     return (items("characters", ("name", "name_en", "series", "outfit"), 4), items("artists", ("name", "name_en"), 3),
-            log)
+            items("outfits", ("name", "name_en", "series", "wearer"), 3), log)
 
 
 def _summary(ch: dict) -> dict:
@@ -229,16 +230,41 @@ def research_characters(found: list[dict], description: str = "") -> list[dict]:
     return _dedupe(results)
 
 
-def research_outfits(results: list[dict], description: str) -> list[dict]:
-    """服装资料块的条目：角色名字对上的作品服装（标出谁穿），以及描述里直接写了名字的服装库服装（只查本地）。"""
+def research_outfits(results: list[dict], description: str, found: list[dict] = ()) -> tuple[list[dict], list[dict]]:
+    """服装资料块的条目 → (条目, 没找到的)。
+
+    条目来源：角色名字对上的作品服装；识别出的作品服装（不管谁穿：人设、原创角色也算；服装库 → Danbooru）；
+    描述里直接写了名字的服装库服装（只查本地）。识别出的服装正好是某个角色的服装（原文相同或写明是他穿）时，
+    挂到那个角色上（角色已对上造型变体的不动）。
+    """
     out: dict[int, dict] = {}
+
+    def add(row: dict, who: str) -> None:
+        e = out.setdefault(row["id"], {"outfit": row, "wearers": []})
+        if who and who not in e["wearers"]:
+            e["wearers"].append(who)
+
     for r in results:
         if r.get("outfit"):
-            e = out.setdefault(r["outfit"]["id"], {"outfit": r["outfit"], "wearers": []})
-            e["wearers"].append(r["query"]["name"] or r["character"]["name"])
+            add(r["outfit"], r["query"]["name"] or r["character"]["name"])
+    misses = []
+    for q in found:
+        row, err = outfits.resolve(q)
+        if not row:
+            misses.append({"query": q, "error": err})
+            continue
+        add(row, q.get("wearer", ""))
+        for r in results:
+            rq = r["query"]
+            text = outfits._key(rq.get("outfit", ""))
+            if r["character"] and not r.get("outfit") and not r.get("base") and (
+                    (text and text == outfits._key(q["name"]))
+                    or (not text and q.get("wearer") and q["wearer"] in (rq["name"], rq["name_en"]))):
+                r.update(outfit=row, outfit_options=[], options=[])
+                add(row, rq["name"] or r["character"]["name"])
     for row in outfits.scan(description, set(out)):
         out[row["id"]] = {"outfit": row, "wearers": []}
-    return list(out.values())
+    return list(out.values()), misses
 
 
 def research_artists(found: list[dict]) -> list[dict]:
@@ -390,7 +416,8 @@ def tag_block(tags: dict | None) -> str:
 
 
 def summary(results: list[dict], artists: list[dict], tags: dict | None, tag_error: str | None,
-            want_web: bool, personas: list[dict] | None = None, outfit_entries: list[dict] | None = None) -> dict:
+            want_web: bool, personas: list[dict] | None = None, outfit_entries: list[dict] | None = None,
+            outfit_misses: list[dict] | None = None) -> dict:
     return {
         "personas": personas or [],
         "characters": _items(results) if want_web else None,
@@ -398,6 +425,8 @@ def summary(results: list[dict], artists: list[dict], tags: dict | None, tag_err
                      "series_tag": e["outfit"]["series_tag"], "post_count": e["outfit"]["post_count"],
                      "wearers": e["wearers"], "edited": bool(e["outfit"]["edited"])}
                     for e in outfit_entries or []] if want_web else None,
+        "outfit_misses": [{"name": m["query"]["name"] or m["query"]["name_en"], "series": m["query"]["series"],
+                           "wearer": m["query"]["wearer"], "error": m["error"]} for m in outfit_misses or []],
         "artists": _items(artists) if want_web else None,
         "tags": None if tags is None and tag_error is None else {
             "count": len(tags["results"]) if tags else 0, "cached": bool(tags and tags.get("cached")),

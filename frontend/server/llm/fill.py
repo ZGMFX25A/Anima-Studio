@@ -165,14 +165,14 @@ def _fill(req: dict, rid: str) -> dict:
     # —— 联网检索（可选）：识别角色与画师 → 资料库 / Danbooru；标签参考 → DanbooruSearch，两者并行 ——
     want_web, want_tags = bool(req.get("web_character")), bool(req.get("tag_reference"))
     found, found_art, results, artists, tags, tag_error, research_log = [], [], [], [], None, None, {}
-    outfit_entries: list[dict] = []
+    outfit_entries, outfit_misses, found_out = [], [], []
     if want_web or want_tags:
         with ThreadPoolExecutor(max_workers=2) as ex:
             fut = ex.submit(tagsearch.search, desc, safety != "safe") if want_tags and desc else None
             if want_web:
                 try:
                     cur = current if mode == "modify" else {}
-                    found, found_art, research_log["extract"] = research.extract(p, m, desc, cur, rid)
+                    found, found_art, found_out, research_log["extract"] = research.extract(p, m, desc, cur, rid)
                     # 识别出的角色名与人设模糊比对上的（「优香」→ 人设「早濑优香」），也按人设处理
                     if persona_on:
                         plist = personas.all_full()
@@ -193,7 +193,8 @@ def _fill(req: dict, rid: str) -> dict:
                                if not (r["character"] and ({r["character"]["tag"], (r.get("base") or {}).get("tag")}
                                                            & covered_tags))]
                     artists = research.research_artists(found_art)
-                    outfit_entries = research.research_outfits(results, desc)
+                    # 作品服装不管谁穿（人设、原创角色也算）都查，所以不受上面「已由人设覆盖」的影响
+                    outfit_entries, outfit_misses = research.research_outfits(results, desc, found_out)
                 except (client.LLMError, WebError, ValueError) as e:
                     if retry.is_cancelled(rid):
                         raise client.LLMError("已取消") from e
@@ -206,6 +207,9 @@ def _fill(req: dict, rid: str) -> dict:
                     warnings.append(f"标签参考不可用：{e}")
             elif want_tags:
                 tag_error = "描述为空，未检索"
+        for m_ in outfit_misses:
+            who = m_["query"]["name"] or m_["query"]["name_en"]
+            warnings.append(f"检索服装「{who}」失败：{m_['error']}" if m_["error"] else f"未在 Danbooru 找到服装「{who}」")
         for kind, lst in (("角色", results), ("画师", artists)):
             for r in lst:
                 who = r["query"]["name"] or r["query"]["name_en"]
@@ -222,7 +226,9 @@ def _fill(req: dict, rid: str) -> dict:
                                  if r.get("outfit_options") else {})}
                              for r in lst]
         research_log.update(found=found, found_artists=found_art, results=brief(results), artists=brief(artists),
+                            found_outfits=found_out,
                             outfits=[{"tag": e["outfit"]["tag"], "wearers": e["wearers"]} for e in outfit_entries],
+                            outfit_misses=[m_["query"] for m_ in outfit_misses],
                             tags=(tags or {}).get("results"), tag_error=tag_error)
     persona_text = personas.block(persona_entries)
     persona_info = [{"id": e["persona"]["id"], "name": e["persona"]["name"], "matched": e["matched"],
@@ -316,7 +322,8 @@ def _fill(req: dict, rid: str) -> dict:
     log["warnings"] = warnings
     _write_log(log)
     return {"fields": fields, "warnings": warnings, "elapsed": time.time() - t_start, "mode": mode,
-            "research": research.summary(results, artists, tags, tag_error, want_web, persona_info, outfit_entries)
+            "research": research.summary(results, artists, tags, tag_error, want_web, persona_info, outfit_entries,
+                                         outfit_misses)
             if (want_web or want_tags or persona_info) else None,
             "recognition": {"model": vm.get("name") or vm["id"],
                             "items": [{k: r.get(k) for k in ("label", "kind", "text", "error", "cached", "elapsed")}
