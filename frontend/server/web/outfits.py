@@ -102,9 +102,10 @@ def _lock(series: str) -> threading.Lock:
         return _locks.setdefault(series, threading.Lock())
 
 
-def ensure_series(series: str, profiles: bool = False) -> None:
-    """作品服装目录：没取过或过期了才联网（3–5 次请求），图片够的服装存入服装库（用户删除过的不存）。
+def ensure_series(series: str, save: bool = True, profiles: bool = False) -> None:
+    """作品服装目录：没取过或过期了才联网（3–5 次请求）。
 
+    save：图片够的服装存入服装库（用户删除过的不存）。服装库的模糊搜索只列出、不存（点了哪套才存哪套）。
     profiles：再把还没有常见标签的逐套补齐（每套 1 次请求，后台用）。
     """
     if not series:
@@ -112,11 +113,12 @@ def ensure_series(series: str, profiles: bool = False) -> None:
     with _lock(series):
         cat = OUTFITS.catalog(series)
         if not cat or time.time() - (cat["fetched_at"] or 0) > CATALOG_DAYS * 86400:
-            items = danbooru.series_outfits(series)
-            OUTFITS.set_catalog(series, items)
-            removed = {x["tag"] for x in OUTFITS.catalog(series)["items"] if x.get("removed")}
-            have = OUTFITS.tags_present(x["tag"] for x in items)
-            todo = [x for x in items if x["tag"] not in have and x["tag"] not in removed and x["post_count"] >= MIN_POSTS]
+            OUTFITS.set_catalog(series, danbooru.series_outfits(series))
+            cat = OUTFITS.catalog(series)
+        if save:
+            have = OUTFITS.tags_present(x["tag"] for x in cat["items"])
+            todo = [x for x in cat["items"]
+                    if x["tag"] not in have and not x.get("removed") and x["post_count"] >= MIN_POSTS]
             for x in todo:
                 _save_item(x, series)
             if todo:
@@ -224,7 +226,7 @@ def fuzzy_search(name: str, series: str) -> dict:
     errors = []
     if s:
         try:
-            ensure_series(s)
+            ensure_series(s, save=False)       # 只列出，选中的那套由 /import 存入
         except WebError as e:
             errors.append(str(e))
         lib = {r["tag"]: r for r in OUTFITS.of_series(s)}
