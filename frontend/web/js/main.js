@@ -23,6 +23,37 @@ function showTab(tab) {
   emit('tab', tab);
 }
 
+// ───────── 主题：跟随系统 / 浅色 / 深色（顶栏右侧按钮，点一下换一种；index.html 里在样式加载前先设好） ─────────
+const THEMES = [['system', '◐', '跟随系统'], ['light', '☀', '浅色'], ['dark', '☾', '深色']];
+const systemLight = window.matchMedia('(prefers-color-scheme: light)');
+
+function themeMode() {
+  try { return localStorage.getItem('anima.theme') || 'system'; } catch { return 'system'; }
+}
+
+function applyTheme() {
+  const mode = themeMode();
+  const dark = mode === 'dark' || (mode === 'system' && !systemLight.matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  const [, icon, label] = THEMES.find(t => t[0] === mode) || THEMES[0];
+  const btn = $('#theme-btn');
+  btn.querySelector('.theme-icon').textContent = icon;
+  btn.querySelector('.theme-label').textContent = label;
+  btn.title = `外观：${label}${mode === 'system' ? `（当前系统为${dark ? '深色' : '浅色'}）` : ''}，点击切换`;
+}
+
+function initTheme() {
+  applyTheme();
+  systemLight.addEventListener('change', applyTheme);
+  $('#theme-btn').addEventListener('click', () => {
+    const i = THEMES.findIndex(t => t[0] === themeMode());
+    const [next, , label] = THEMES[(i + 1) % THEMES.length];
+    try { localStorage.setItem('anima.theme', next); } catch { /* 忽略 */ }
+    applyTheme();
+    toast(`外观：${label}`, 'ok', 1500);
+  });
+}
+
 // ───────── 顶栏状态 ─────────
 let statusTimer = null;
 async function refreshStatus() {
@@ -92,4 +123,5 @@ async function main() {
   if (!app.boot.engine_ready) toast('引擎还在启动，采样器列表稍后自动加载', 'info');
 }
 
+initTheme();
 main();

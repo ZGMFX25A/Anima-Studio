@@ -22,15 +22,14 @@
   --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
   color-scheme: dark;
 }
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f3f4f7; --panel: #ffffff; --panel-2: #f6f7fa; --panel-3: #eceef3;
-    --border: #e1e4ea; --border-strong: #cfd3dc; --text: #1c2029; --muted: #687083; --faint: #9aa1af;
-    --accent: #5b63e8; --accent-strong: #4a52d6; --accent-soft: rgba(91, 99, 232, .1);
-    --warn-soft: rgba(201, 145, 30, .12); --warn: #b07a12; --danger-soft: rgba(220, 70, 70, .1);
-    --shadow: 0 10px 40px rgba(20, 24, 40, .14);
-    color-scheme: light;
-  }
+/* 浅色：顶栏「外观」按钮选浅色，或跟随系统且系统为浅色时（index.html 在加载前设好 data-theme） */
+:root[data-theme="light"] {
+  --bg: #f3f4f7; --panel: #ffffff; --panel-2: #f6f7fa; --panel-3: #eceef3;
+  --border: #e1e4ea; --border-strong: #cfd3dc; --text: #1c2029; --muted: #687083; --faint: #9aa1af;
+  --accent: #5b63e8; --accent-strong: #4a52d6; --accent-soft: rgba(91, 99, 232, .1);
+  --warn-soft: rgba(201, 145, 30, .12); --warn: #b07a12; --danger-soft: rgba(220, 70, 70, .1);
+  --shadow: 0 10px 40px rgba(20, 24, 40, .14);
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -66,6 +65,18 @@ button, input, select, textarea { font: inherit; color: inherit; }
   background: var(--panel-2); border-radius: 999px; padding: 5px 12px; cursor: pointer; color: var(--muted); font-size: 12.5px;
 }
 .status-pill:hover { color: var(--text); }
+/* 引擎页：ComfyUI 启动参数（默认折叠，放在最下面） */
+.args-head { cursor: pointer; user-select: none; }
+.args-head .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.args-caret { color: var(--muted); font-size: 10px; transition: transform .15s; }
+.args-card.open .args-caret { transform: rotate(90deg); }
+.args-card:not(.open) { gap: 4px; }
+.theme-btn {
+  margin-left: -16px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--panel-2);
+  border-radius: 999px; padding: 5px 12px; cursor: pointer; color: var(--muted); font-size: 12.5px;
+}
+.theme-btn:hover { color: var(--text); }
+.theme-icon { font-size: 13px; line-height: 1; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
 .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(76, 195, 138, .18); }
 .dot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
@@ -467,6 +478,53 @@ a:hover { text-decoration: underline; }
 .models-tools input[type=text] { max-width: 300px; }
 
 .crow.four { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.4fr) 90px 150px; }
+/* 角色库：本体名字旁的「N 个变体」折叠按钮；列表展开时变体缩进在本体下面；下拉菜单；模糊搜索结果；详情里的「造型变体」 */
+.crow .cname-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.crow .cname-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vfold { flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px 1px 6px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border-strong); background: var(--panel-3); color: var(--muted);
+  font-family: inherit; font-size: 11.5px; font-weight: 500; line-height: 1.6; }
+.vfold:hover { color: var(--text); }
+.vfold .caret { display: inline-block; font-size: 9px; transition: transform .15s; }
+.vfold.open { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.vfold.open .caret { transform: rotate(90deg); }
+.vfold.hit:not(.open)::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.crow.variant { padding-top: 6px; padding-bottom: 6px; border-top-style: dashed; background: color-mix(in srgb, var(--panel-2) 55%, transparent); }
+.crow.variant .cname { font-weight: 500; padding-left: 14px; }
+.crow.variant.hit { background: var(--accent-soft); }
+.crow .vmark { color: var(--faint); font-weight: 400; }
+.lib-add { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.lib-add-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.lib-add-row { display: flex; gap: 8px; }
+.lib-add-row input { flex: 1; min-width: 0; }
+.lib-add-row input + input { flex: 0 1 260px; }
+.lib-bar { display: flex; align-items: center; gap: 10px; margin-bottom: -6px; flex-wrap: wrap; }
+.lib-bar .lib-search { width: 320px; max-width: 100%; }
+.vmenu { position: fixed; z-index: 40; width: min(580px, calc(100vw - 16px)); padding: 6px; background: var(--panel);
+  border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow); animation: fade .12s; }
+.vmenu-head { padding: 4px 8px 7px; margin-bottom: 4px; font-size: 12.5px; border-bottom: 1px solid var(--border); }
+.vmenu-list { display: flex; flex-direction: column; max-height: 340px; overflow-y: auto; }
+.vmenu-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) 64px; gap: 10px; align-items: center; padding: 7px 8px;
+  border: 0; border-radius: 7px; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.vmenu-item:hover, .vmenu-item:focus-visible { background: var(--panel-3); outline: none; }
+.vmenu-item.hit { background: var(--accent-soft); }
+.vm-name, .vm-tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vm-name .badge { margin-left: 6px; }
+.vm-count { text-align: right; }
+.fz-box { display: flex; flex-direction: column; gap: 8px; }
+.fz-box .db-list { max-height: 320px; }
+.db-row.busy { opacity: .5; pointer-events: none; }
+.vlist { display: flex; flex-direction: column; padding: 4px 10px 6px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel-2); font-size: 13px; }
+.vlist-head { display: flex; align-items: center; gap: 6px; padding: 4px 0 6px; border-bottom: 1px solid var(--border); }
+.vrow { display: grid; grid-template-columns: minmax(0, 1fr) 76px minmax(0, 220px); gap: 12px; align-items: center; padding: 5px 0;
+  border-top: 1px dashed var(--border); }
+.vlist-head + .vrow { border-top: 0; }
+.vrow > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+span.vrow-name { color: var(--muted); font-weight: 400; }
+.vrow-name small { display: block; color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; }
+.vrow-state { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.vrow > span:last-child:not(.vrow-state) { text-align: right; }
 
 /* 有图的格子：固定高度，宽度随图片比例，整张图完整显示 */
 .strip-item:has(> img) { width: auto; display: block; }

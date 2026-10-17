@@ -22,8 +22,8 @@ from .llm import persona as llm_persona
 from .llm import retry as llm_retry
 from .llm import store as llm_store
 from .personas import PersonaError
-from .web import danbooru, net, tagsearch
-from .web.library import LIBS
+from .web import danbooru, net, tagsearch, variant_cache
+from .web.library import CHARACTERS, LIBS
 from .web.net import WebError
 
 log = logging.getLogger("frontend.app")
@@ -472,11 +472,81 @@ def library_list(kind: str, q: str = "", offset: int = 0, limit: int = 50):
     return lib.search(q, max(0, offset), min(max(1, limit), 200)) if lib else err(404, "NOT_FOUND", "未知资料库")
 
 
+def _detail(kind: str, r: dict | None):
+    """条目详情；角色另附「变体是否正在后台缓存」。"""
+    if r and kind == "characters":
+        r["variant_busy"] = variant_cache.busy(r["tag"])
+    return r
+
+
 @app.get("/api/library/{kind}/{rid}")
 def library_get(kind: str, rid: int):
     lib = _lib(kind)
     r = lib.get(rid) if lib else None
-    return r if r else err(404, "NOT_FOUND", "条目不存在")
+    return _detail(kind, r) if r else err(404, "NOT_FOUND", "条目不存在")
+
+
+@app.post("/api/library/characters/search")
+def library_char_search(name: str = Body(""), series: str = Body("")):
+    """模糊搜索：名字（可只写一部分）+ 作品 → Danbooru 角色标签候选，选中后用 /import 导入。"""
+    if not name.strip():
+        return err(422, "INVALID", "请输入名字")
+    try:
+        r = danbooru.search_characters(name, series)
+    except WebError as e:
+        return err(502, "WEB_ERROR", str(e))
+    have = CHARACTERS.tags_present(c["tag"] for c in r["items"])
+    return {**r, "items": [{**c, "in_library": c["tag"] in have} for c in r["items"]]}
+
+
+@app.post("/api/library/characters/import")
+def library_char_import(tag: str = Body(...), name: str = Body("")):
+    """按选中的标签导入角色库；本体与变体随后在后台补齐。"""
+    tag = tag.strip().replace(" ", "_")
+    name = name.strip()
+    r = CHARACTERS.get_by_tag(tag)
+    if not r:
+        try:
+            prof = danbooru.profile(tag)
+        except WebError as e:
+            return err(502, "WEB_ERROR", str(e))
+        if not prof["post_count"] and not prof["wiki"]:
+            return err(404, "NOT_FOUND", f"Danbooru 上找不到角色标签 {tag}")
+        cjk = [name] if name and not name.isascii() else []    # 中日文写法记为显示名与名称映射
+        r = CHARACTERS.save_from_danbooru(prof, cjk[0] if cjk else "", cjk)
+    variant_cache.schedule(tag)
+    return _detail("characters", CHARACTERS.get(r["id"]))
+
+
+@app.post("/api/library/characters/{rid}/variants")
+def library_char_variants(rid: int):
+    """重新获取本体的变体列表（图片数够的变体在后台缓存）。"""
+    r = CHARACTERS.get(rid)
+    if not r:
+        return err(404, "NOT_FOUND", "条目不存在")
+    if r["parent_tag"]:
+        return err(422, "INVALID", "这是一个变体，请在本体上获取变体列表")
+    try:
+        variant_cache.refresh_list(r)
+    except WebError as e:
+        return err(502, "WEB_ERROR", str(e))
+    return _detail("characters", CHARACTERS.get(rid))
+
+
+@app.post("/api/library/characters/{rid}/variants/fetch")
+def library_char_variant_fetch(rid: int, tag: str = Body(..., embed=True)):
+    """明确取某个变体存入角色库（不受图片数门槛限制）。"""
+    r = CHARACTERS.get(rid)
+    if not r:
+        return err(404, "NOT_FOUND", "条目不存在")
+    v = next((v for v in r["variants"] if v["tag"] == tag), None)
+    if not v:
+        return err(422, "INVALID", f"{tag} 不在这个角色的变体列表里")
+    try:
+        variant_cache.save_variant(r, tag, v["post_count"])
+    except WebError as e:
+        return err(502, "WEB_ERROR", str(e))
+    return _detail("characters", CHARACTERS.get(rid))
 
 
 @app.post("/api/library/{kind}")
@@ -502,20 +572,22 @@ def library_fetch(kind: str, data: dict = Body(...)):
     if not name:
         return err(422, "INVALID", "请输入名字")
     hit = lib.lookup(name)
-    if hit:
-        return hit
     try:
-        cands = _find(kind, name, data.get("series") or "")
-        if not cands:
-            return err(404, "NOT_FOUND", f"Danbooru 上没有找到「{name}」")
-        best = cands[0]
-        existing = lib.get_by_tag(best["tag"])
-        if existing:
-            lib.add_names(existing["id"], [name])
-            return lib.get(existing["id"])
-        return lib.save_from_danbooru(_profile(kind, best["tag"], best["post_count"]), name, [name])
+        if not hit:
+            cands = _find(kind, name, data.get("series") or "")
+            if not cands:
+                return err(404, "NOT_FOUND", f"Danbooru 上没有找到「{name}」")
+            best = cands[0]
+            hit = lib.get_by_tag(best["tag"])
+            if hit:
+                lib.add_names(hit["id"], [name])
+            else:
+                hit = lib.save_from_danbooru(_profile(kind, best["tag"], best["post_count"]), name, [name])
     except WebError as e:
         return err(502, "WEB_ERROR", str(e))
+    if kind == "characters":     # 本体与变体在后台补齐
+        variant_cache.schedule(hit["tag"])
+    return _detail(kind, lib.get(hit["id"]))
 
 
 @app.put("/api/library/{kind}/{rid}")
@@ -542,7 +614,14 @@ def library_refresh(kind: str, rid: int, keep_edited: bool = Body(True, embed=Tr
         return err(502, "WEB_ERROR", str(e))
     if not prof["post_count"] and not prof.get("appearance") and not prof.get("wiki") and not prof.get("other_names"):
         return err(404, "NOT_FOUND", f"Danbooru 上找不到标签 {r['tag']}")
-    return lib.apply_refresh(rid, prof, keep_edited)
+    r = lib.apply_refresh(rid, prof, keep_edited)
+    if kind == "characters" and not r["parent_tag"]:     # 本体：变体列表一起刷新（新出的变体补进来）
+        try:
+            variant_cache.refresh_list(r)
+        except WebError:
+            pass
+        r = lib.get(rid)
+    return _detail(kind, r)
 
 
 @app.delete("/api/library/{kind}/{rid}")
@@ -594,17 +673,17 @@ def persona_card_import(data: str = Body(...), on_conflict: str = Body("")):
 
 
 @app.post("/api/personas/danbooru/search")
-def persona_search(q: str = Body("", embed=True)):
+def persona_search(q: str = Body(""), series: str = Body(""), fuzzy: bool = Body(False)):
     try:
-        return llm_persona.search(q)
+        return llm_persona.search(q, series, fuzzy)
     except WebError as e:
         return err(502, "WEB_ERROR", str(e))
 
 
 @app.post("/api/personas/danbooru/variants")
-def persona_variants(tag: str = Body(..., embed=True)):
+def persona_variants(tag: str = Body(...), refresh: bool = Body(False)):
     try:
-        return llm_persona.variants(tag.strip().replace(" ", "_"))
+        return llm_persona.variants(tag.strip().replace(" ", "_"), refresh)
     except WebError as e:
         return err(502, "WEB_ERROR", str(e))
 

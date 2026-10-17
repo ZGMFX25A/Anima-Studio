@@ -118,13 +118,17 @@
 .ai-bar .grow { max-width: 520px; }
 .ai-status:empty { display: none; }
 .db-modal { display: flex; flex-direction: column; gap: 12px; color: var(--text); }
-.db-search { display: flex; gap: 8px; }
+.db-search { display: flex; gap: 8px; align-items: center; }
+.db-search input { flex: 1; min-width: 0; }
+.db-search .seg { flex-shrink: 0; }
+.db-row.dim { opacity: .55; }
 .db-list { display: flex; flex-direction: column; gap: 4px; max-height: 280px; overflow-y: auto; }
 .db-row { display: flex; gap: 10px; align-items: center; text-align: left; border: 1px solid var(--border); background: var(--panel-2);
   border-radius: 8px; padding: 7px 10px; cursor: pointer; font: inherit; color: var(--text); }
 .db-row:hover { border-color: var(--border-strong); }
 .db-row.on { border-color: var(--accent); background: var(--accent-soft); }
 .db-vars { display: flex; flex-direction: column; gap: 8px; }
+.db-vars-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
 .db-vars:empty { display: none; }
 .db-varlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 4px 14px; max-height: 220px; overflow-y: auto; }
 .checkline { display: flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; white-space: nowrap; }
