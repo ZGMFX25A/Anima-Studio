@@ -16,7 +16,7 @@ let crZone, prZone;
 export function initDraw() {
   const d = app.boot.defaults;
   attachArtistPicker($('input[data-field="artist"]'));     // 输入时从画师库给候选
-  attachOutfitSearch($('#outfit-search'));                 // 服装检索栏：服装库的服装，点「复制」复制标签
+  attachOutfitSearch($('#outfit-search'));                 // AI 填写描述框下的服装检索栏：复制服装库的标签贴进描述
   fill($('#aspect'), 
     ...Object.keys(d.aspect_presets).map(k => el('option', { value: k }, k)),
     el('option', { value: 'custom' }, '自定义'));
