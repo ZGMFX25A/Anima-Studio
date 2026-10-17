@@ -88,6 +88,12 @@ CREATE TABLE IF NOT EXISTS outfit_series (
     items TEXT NOT NULL DEFAULT '[]',
     fetched_at REAL
 );
+-- 作品的中文名与常用简称（服装库「用 AI 起中文名」时一起起），绘图页服装检索栏按作品搜索用
+CREATE TABLE IF NOT EXISTS series_names (
+    series_tag TEXT PRIMARY KEY,
+    names TEXT NOT NULL DEFAULT '[]',
+    updated_at REAL
+);
 """
 
 
@@ -505,6 +511,23 @@ class OutfitLibrary(Library):
                      for x in items]
             c.execute("INSERT OR REPLACE INTO outfit_series (series_tag, items, fetched_at) VALUES (?,?,?)",
                       (series, json.dumps(items, ensure_ascii=False), time.time()))
+
+    def set_name(self, rid: int, name: str) -> None:
+        """AI 起的中文名：设为显示名称并记进名称映射（不算手动编辑，原来的名字仍在名称映射里）。"""
+        with _lock, _conn() as c:
+            r = c.execute(f"SELECT name FROM {self.table} WHERE id = ?", (rid,)).fetchone()
+            if r:
+                self._add_names(c, rid, [r["name"], name])
+                c.execute(f"UPDATE {self.table} SET name = ?, updated_at = ? WHERE id = ?", (name, time.time(), rid))
+
+    def series_names(self) -> dict[str, list[str]]:
+        with _lock, _conn() as c:
+            return {r["series_tag"]: json.loads(r["names"]) for r in c.execute("SELECT series_tag, names FROM series_names")}
+
+    def set_series_names(self, series: str, names: list[str]) -> None:
+        with _lock, _conn() as c:
+            c.execute("INSERT OR REPLACE INTO series_names (series_tag, names, updated_at) VALUES (?,?,?)",
+                      (series, json.dumps(names, ensure_ascii=False), time.time()))
 
     def update_catalog_item(self, series: str, tag: str, fields: dict) -> None:
         with _lock, _conn() as c:

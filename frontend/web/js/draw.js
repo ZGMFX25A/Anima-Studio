@@ -4,6 +4,7 @@ import { $, $$, el, fill, toast, toastError, dropzone, lightbox, confirmDialog, 
 import { app, bindAll, syncAll, setField, saveForm, on, emit, modelInfo, refHashesInUse } from './store.js';
 import { showPromptModal, reuseDialog } from './records.js';
 import { attachArtistPicker, artistHints, renderArtistHints } from './artistpick.js';
+import { attachOutfitSearch } from './outfitpick.js';
 
 const STAGE_TEXT = { queued: '排队中', preparing: '准备中', base: '绘制中', refine: '精细重绘', upscale: '超分', saving: '保存中', done: '完成' };
 const TERMINAL = ['succeeded', 'failed', 'cancelled'];
@@ -15,6 +16,7 @@ let crZone, prZone;
 export function initDraw() {
   const d = app.boot.defaults;
   attachArtistPicker($('input[data-field="artist"]'));     // 输入时从画师库给候选
+  attachOutfitSearch($('#outfit-search'));                 // 服装检索栏：服装库的服装，点「复制」复制标签
   fill($('#aspect'), 
     ...Object.keys(d.aspect_presets).map(k => el('option', { value: k }, k)),
     el('option', { value: 'custom' }, '自定义'));

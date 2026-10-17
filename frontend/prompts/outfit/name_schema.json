@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "outfits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "tag": {"type": "string"},
+          "name": {"type": "string"}
+        },
+        "required": ["tag", "name"],
+        "additionalProperties": false
+      }
+    },
+    "series": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "tag": {"type": "string"},
+          "names": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["tag", "names"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["outfits", "series"],
+  "additionalProperties": false
+}
