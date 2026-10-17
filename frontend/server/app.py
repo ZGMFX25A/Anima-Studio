@@ -22,8 +22,8 @@ from .llm import persona as llm_persona
 from .llm import retry as llm_retry
 from .llm import store as llm_store
 from .personas import PersonaError
-from .web import danbooru, net, research, tagsearch, variant_cache
-from .web.library import ARTISTS, CHARACTERS, LIBS
+from .web import danbooru, net, outfits, research, tagsearch, variant_cache
+from .web.library import ARTISTS, CHARACTERS, LIBS, OUTFITS
 from .web.library import norm as library_norm
 from .web.net import WebError
 
@@ -449,8 +449,8 @@ def web_clear_cache():
     return {"removed": tagsearch.clear_cache()}
 
 
-# ───────────────────────────── 资料库（角色 / 画师） ─────────────────────────────
-# kind = characters / artists
+# ───────────────────────────── 资料库（角色 / 画师 / 服装） ─────────────────────────────
+# kind = characters / artists / outfits
 
 def _lib(kind: str):
     return LIBS.get(kind)
@@ -460,10 +460,14 @@ def _find(kind: str, name: str, series: str = ""):
     en = name if name.isascii() else ""
     if kind == "artists":
         return danbooru.find_artist(name, en)
+    if kind == "outfits":
+        return danbooru.find_outfit(name)
     return danbooru.find_character(name, en, series)
 
 
 def _profile(kind: str, tag: str, post_count=None):
+    if kind == "outfits":
+        return outfits.fetch_profile(tag, post_count)
     return danbooru.artist_profile(tag, post_count) if kind == "artists" else danbooru.profile(tag, post_count)
 
 
@@ -474,9 +478,13 @@ def library_list(kind: str, q: str = "", offset: int = 0, limit: int = 50):
 
 
 def _detail(kind: str, r: dict | None):
-    """条目详情；角色另附「变体是否正在后台缓存」。"""
+    """条目详情；角色另附「变体是否正在后台缓存」，服装另附常穿的角色在角色库里的名称。"""
     if r and kind == "characters":
         r["variant_busy"] = variant_cache.busy(r["tag"])
+    if r and kind == "outfits":
+        rows = {m["tag"]: CHARACTERS.get_by_tag(m["tag"]) for m in r["members"]}
+        r["members"] = [{**m, "id": rows[m["tag"]]["id"] if rows[m["tag"]] else None,
+                         "name": rows[m["tag"]]["name"] if rows[m["tag"]] else ""} for m in r["members"]]
     return r
 
 
@@ -533,6 +541,33 @@ def library_char_import(tag: str = Body(...), name: str = Body("")):
     return _detail("characters", CHARACTERS.get(r["id"]))
 
 
+@app.post("/api/library/outfits/search")
+def library_outfit_search(name: str = Body(""), series: str = Body("")):
+    """服装库的模糊搜索：名字（可空）+ 作品 → 这个作品的服装（名字对上的在前，其余照列）+ Danbooru 补全的结果。"""
+    if not name.strip() and not series.strip():
+        return err(422, "INVALID", "请输入服装名或作品")
+    try:
+        return outfits.fuzzy_search(name, series)
+    except WebError as e:
+        return err(502, "WEB_ERROR", str(e))
+
+
+@app.post("/api/library/outfits/import")
+def library_outfit_import(tag: str = Body(...), name: str = Body("")):
+    """按选中的标签存入服装库（删除过的也可以这样加回来）。"""
+    tag = tag.strip().replace(" ", "_")
+    r = OUTFITS.get_by_tag(tag)
+    if not r:
+        try:
+            prof = outfits.fetch_profile(tag)
+        except WebError as e:
+            return err(502, "WEB_ERROR", str(e))
+        if not prof["post_count"] and not prof["wiki"]:
+            return err(404, "NOT_FOUND", f"Danbooru 上找不到标签 {tag}")
+        r = OUTFITS.save_from_danbooru(prof, "", [])
+    return _detail("outfits", OUTFITS.get(r["id"]))
+
+
 @app.post("/api/library/characters/{rid}/variants")
 def library_char_variants(rid: int):
     """重新获取本体的变体列表（图片数够的变体在后台缓存）。"""
@@ -571,6 +606,8 @@ def library_create(kind: str, data: dict = Body(...)):
         return err(404, "NOT_FOUND", "未知资料库")
     if kind == "characters":   # 角色库只存 Danbooru 上的已有角色
         return err(422, "INVALID", "角色库只保存 Danbooru 上的已有角色；原创角色请在「人设」页新建")
+    if kind == "outfits":
+        return err(422, "INVALID", "服装库只保存 Danbooru 上的服装标签；自己设计的服装请写在人设的服装差分里")
     try:
         return lib.create_manual(data)
     except ValueError as e:

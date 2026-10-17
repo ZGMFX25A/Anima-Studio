@@ -1,15 +1,16 @@
-// 菜单 → 角色库 / 画师库：搜索、查看与手动纠正联网检索到的资料；手动新增。两个库共用这一套界面。
+// 菜单 → 角色库 / 画师库 / 服装库：搜索、查看与手动纠正联网检索到的资料；手动新增。三个库共用这一套界面。
 import { api } from './api.js';
 import { $, el, fill, toast, toastError, confirmDialog, modal, fmtTime } from './ui.js';
-import { on } from './store.js';
+import { on, emit } from './store.js';
 import { clearArtistHints } from './artistpick.js';
 
 const FIELD_ZH = { name: '名称', tag: '标准标签', series_tag: '作品', wiki: '简介', appearance: '外貌标签', notes: '补充说明' };
 const sp = (t) => (t || '').replace(/_/g, ' ');
 
+// full：有作品 / 外貌标签 / 简介；variants：造型变体挂在本体下；fuzzy：「从 Danbooru 添加」有模糊搜索；members：常穿的角色
 export const LIB_CONFIG = {
   characters: {
-    root: '#panel-chars', title: '角色库', noun: '角色', openEvent: 'chars-open', full: true, manual: false,
+    root: '#panel-chars', title: '角色库', noun: '角色', unit: '个', openEvent: 'chars-open', full: true, variants: true, fuzzy: true, manual: false,
     url: (tag) => `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(tag)}`,
     namePh: '显示名称，如 天童爱丽丝', tagPh: 'aris (blue archive)', tagLabel: '标准角色标签', tagHint: '写进 character',
     fetchPh: '角色名或标签，如 天童爱丽丝 / aris (blue archive)', searchPh: '在角色库中搜索：名字、标签或作品',
@@ -17,9 +18,23 @@ export const LIB_CONFIG = {
     notesPh: '原样发给 LLM，优先级最高。例如：默认服装为女仆装；瞳色是蓝色不是紫色',
     hint: '联网检索、在这里添加、人设导入用到的 Danbooru 角色都会存进来，下次直接用、不再联网；造型变体归在本体下面。资料有误点开改就行，改过的内容不会被自动覆盖。原创角色请在「人设」页新建。',
     empty: '角色库还是空的。可以在上面从 Danbooru 添加，或在 AI 填写中打开「联网检索」。',
+    fuzzyHint: '名字可以只写一部分，加上作品更准；选中一个导入，它的造型变体会一起存进来',
+    fuzzyNamePh: '名字，可以只写一部分，如 晶', appHint: '百分比 = 该角色图片中出现的比例',
+  },
+  outfits: {
+    root: '#panel-outfits', title: '服装库', noun: '服装', unit: '套', openEvent: 'outfits-open', full: true, variants: false, fuzzy: true, members: true, manual: false,
+    url: (tag) => `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(tag)}`,
+    namePh: '显示名称，可以改成好认的中文名', tagPh: 'mischievous straight uniform (blue archive)', tagLabel: '服装标签', tagHint: '写进 appearance',
+    fetchPh: '服装名或标签，如 イタズラ☆ストレート / mischievous straight uniform', searchPh: '在服装库中搜索：名字、标签或作品',
+    fetchHint: '输入服装名（日文 / 英文）或标签，直接添加最匹配的一个',
+    notesPh: '原样发给 LLM，优先级最高。例如：上衣是露脐短款，袖子是分离袖',
+    hint: 'Danbooru 上单独建了标签、几个角色共用的服装（活动服装、偶像团体 / 学校制服等）。和造型变体的区别：变体是角色标签，写进 character；这里是普通标签，写进 appearance。AI 填写用到某个作品的角色时，这个作品的服装（20 张图以上）会自动存进来。描述里写了服装的名字就直接用；对不上名字时附给 AI 参考，只有明确指那一套（如「优香的偶像服」「活动里那套」）才用，只说「偶像服」按通用的写。',
+    empty: '服装库还是空的。AI 填写用到作品角色时会自动存入这个作品的服装；也可以在上面添加，或用「模糊搜索」列出某个作品的全部服装。',
+    fuzzyHint: '作品必填；服装名可以不写或只写个说法（如 偶像服），对不上名字时列出这个作品的全部服装，选一个导入',
+    fuzzyNamePh: '服装名或说法（可选），如 偶像服', appHint: '百分比 = 穿这套服装的图片中出现的比例，混有常穿它的角色本身的外貌',
   },
   artists: {
-    root: '#panel-artists', title: '画师库', noun: '画师', openEvent: 'artists-open', full: false, manual: true,
+    root: '#panel-artists', title: '画师库', noun: '画师', unit: '个', openEvent: 'artists-open', full: false, manual: true,
     url: (tag) => `https://danbooru.donmai.us/artists/show_or_new?name=${encodeURIComponent(tag)}`,
     namePh: '显示名称，如 米山舞', tagPh: 'yoneyama mai', tagLabel: '标准画师标签', tagHint: '写进 artist（自动加 @）',
     fetchPh: '画师名或标签，如 米山舞 / yoneyama mai', searchPh: '在画师库中搜索：名字或标签',
@@ -89,7 +104,7 @@ export function createLibrary(kind) {
   function families() {
     const out = [], byTag = new Map();
     for (const c of st.items) {
-      const f = cfg.full && c.parent_tag && byTag.get(c.parent_tag);
+      const f = cfg.variants && c.parent_tag && byTag.get(c.parent_tag);
       if (f) f.vars.push(c);
       else { const nf = { base: c, vars: [] }; out.push(nf); byTag.set(c.tag, nf); }
     }
@@ -171,18 +186,17 @@ export function createLibrary(kind) {
     fetchName.addEventListener('keydown', (e) => { if (e.key === 'Enter') doFetch(); });
 
     // 从 Danbooru 添加：角色库有「直接添加 / 模糊搜索」两个选项
-    const fuzzy = cfg.full && st.addMode === 'fuzzy';
-    const ADD_MODES = [['direct', '直接添加', cfg.fetchHint],
-      ['fuzzy', '模糊搜索', '名字可以只写一部分，加上作品更准；选中一个导入，它的造型变体会一起存进来']];
-    const modeSeg = cfg.full ? el('div', { class: 'seg small' }, ADD_MODES.map(([k, label]) =>
+    const fuzzy = cfg.fuzzy && st.addMode === 'fuzzy';
+    const ADD_MODES = [['direct', '直接添加', cfg.fetchHint], ['fuzzy', '模糊搜索', cfg.fuzzyHint]];
+    const modeSeg = cfg.fuzzy ? el('div', { class: 'seg small' }, ADD_MODES.map(([k, label]) =>
       el('button', { class: st.addMode === k ? 'on' : '', onclick: () => { st.addMode = k; drawList(); } }, label))) : null;
-    const fzName = el('input', { type: 'text', placeholder: '名字，可以只写一部分，如 晶', value: st.fz.name });
-    const fzSeries = el('input', { type: 'text', placeholder: '作品（可选），如 碧蓝档案', value: st.fz.series });
+    const fzName = el('input', { type: 'text', placeholder: cfg.fuzzyNamePh, value: st.fz.name });
+    const fzSeries = el('input', { type: 'text', placeholder: cfg.members ? '作品（必填），如 碧蓝档案' : '作品（可选），如 碧蓝档案', value: st.fz.series });
     const fzBtn = el('button', { class: `btn small accent${st.fz.busy ? ' busy' : ''}`, disabled: st.fz.busy }, '搜索');
     const doSearch = async () => {
       st.fz.name = fzName.value.trim();
       st.fz.series = fzSeries.value.trim();
-      if (!st.fz.name) return;
+      if (cfg.members ? !st.fz.series : !st.fz.name) return toast(cfg.members ? '请填写作品' : '请输入名字', 'warn');
       st.fz.busy = true;
       st.fz.res = null;
       drawList();
@@ -196,7 +210,7 @@ export function createLibrary(kind) {
       row.classList.add('busy');
       try {
         const r = await api.post(`${base}/import`, { tag: c.tag, name: st.fz.name });
-        toast(`已加入：${r.name} → ${sp(r.tag)}${r.parent_tag || !r.variants_at ? '，本体和造型变体正在后台存入' : ''}`, 'ok', 5000);
+        toast(`已加入：${r.name} → ${sp(r.tag)}${cfg.variants && (r.parent_tag || !r.variants_at) ? '，本体和造型变体正在后台存入' : ''}`, 'ok', 5000);
         openEditor(r.id);
       } catch (e) { toastError(e); row.classList.remove('busy'); }
     };
@@ -231,7 +245,7 @@ export function createLibrary(kind) {
     const withVars = fams.filter(f => f.vars.length);
     const allOpen = withVars.length && withVars.every(f => st.open.has(f.base.tag));
     // 变体默认折叠；显示方式：下拉菜单 / 在列表中展开（可一键全部展开）
-    const varTools = cfg.full && withVars.length ? [
+    const varTools = cfg.variants && withVars.length ? [
       el('span', { class: 'muted small' }, '变体显示方式'),
       el('div', { class: 'seg small' }, [['menu', '下拉菜单', '点「N 个变体」弹出下拉菜单'], ['inline', '在列表中展开', '点「N 个变体」在本体下面展开']]
         .map(([k, label, title]) => el('button', { class: st.varView === k ? 'on' : '', title, onclick: () => setVarView(k) }, label))),
@@ -239,7 +253,7 @@ export function createLibrary(kind) {
         st.open = allOpen ? new Set() : new Set(withVars.map(f => f.base.tag));
         drawList();
       } }, allOpen ? '全部折叠' : '全部展开') : null] : [];
-    const count = st.total ? `${st.total} 个${cfg.noun}${st.variantTotal ? ` · ${st.variantTotal} 个造型变体` : ''}` : '';
+    const count = st.total ? `${st.total} ${cfg.unit}${cfg.noun}${st.variantTotal ? ` · ${st.variantTotal} 个造型变体` : ''}` : '';
 
     fill(root,
       el('div', { class: 'panel-title' }, el('h2', {}, cfg.title), el('span', { class: 'muted small' }, count),
@@ -262,27 +276,36 @@ export function createLibrary(kind) {
   // 模糊搜索的候选：点一个导入（本体与变体在后台补齐）
   function fuzzyResults(onPick) {
     const fz = st.fz;
-    if (fz.busy) return el('div', { class: 'fz-box muted small' }, '搜索中…（约 3–6 秒）');
+    if (fz.busy) return el('div', { class: 'fz-box muted small' }, cfg.members ? '搜索中…（第一次查这个作品约 2–5 秒）' : '搜索中…（约 3–6 秒）');
     if (!fz.res) return null;
     const { items, series_tags: keys } = fz.res;
     const narrowed = keys.length && items.some(c => c.series_match);
     const nMatch = items.filter(c => c.series_match).length;
+    const sname = sp(keys[keys.length - 1] || '');
+    const nHit = items.filter(c => c.exact).length;
+    const outfitSum = () => !items.length ? `没有找到${fz.series && !keys.length ? `，也没认出作品「${fz.series}」（换个写法试试：英文名、日文名）` : ''}`
+      : !fz.name ? `${sname} 的 ${items.length} 套服装，点一个导入`
+        : nHit ? `${nHit} 套名字对得上（排在前面），其余是 ${sname} 的其它服装；点一个导入`
+          : `没有名字对得上「${fz.name}」的，下面是 ${sname} 的全部服装，看简介挑一个导入`;
     return el('div', { class: 'fz-box' },
-      fz.res.offline ? el('div', { class: 'small', style: { color: 'var(--warn)' } }, `Danbooru 连不上（${fz.res.offline}），下面只有角色库里的结果`) : null,
+      fz.res.offline ? el('div', { class: 'small', style: { color: 'var(--warn)' } }, `Danbooru 连不上（${fz.res.offline}），下面只有${cfg.title}里的结果`) : null,
       el('div', { class: 'muted small' },
-        !items.length ? `Danbooru 上没有找到「${fz.name}」，少写几个字或换个写法试试`
+        cfg.members ? outfitSum()
+          : !items.length ? `Danbooru 上没有找到「${fz.name}」，少写几个字或换个写法试试`
           : fz.series && !keys.length ? `没认出作品「${fz.series}」，下面的结果没有按作品筛选；换个写法试试（英文名、日文名）`
             : narrowed ? `${items.length} 个结果，${nMatch} 个属于 ${sp(keys[keys.length - 1])}（排在前面），点一个导入`
               : keys.length ? `${items.length} 个结果，没有属于 ${sp(keys[keys.length - 1])} 的；点一个导入` : `${items.length} 个结果，点一个导入`),
       items.length ? el('div', { class: 'db-list' }, items.map(c => {
-        const row = el('button', { class: `db-row${narrowed && c.series_match === false ? ' dim' : ''}`, onclick: () => onPick(c, row) },
+        const row = el('button', { class: `db-row${narrowed && c.series_match === false ? ' dim' : ''}${c.desc ? ' with-desc' : ''}`, onclick: () => onPick(c, row) },
           el('b', { class: 'mono' }, sp(c.tag)),
           c.matched && c.matched !== c.tag && c.matched !== sp(c.tag) ? el('span', { class: 'muted small' }, `← ${c.matched}`) : null,
           el('span', { class: 'grow' }),
-          /^.+?_\(.+\)_\([^()]+\)$/.test(c.tag) ? el('span', { class: 'muted small' }, '造型变体') : null,
+          cfg.members && fz.name && c.exact ? el('span', { class: 'badge small-badge' }, '名字对上') : null,
+          cfg.variants && /^.+?_\(.+\)_\([^()]+\)$/.test(c.tag) ? el('span', { class: 'muted small' }, '造型变体') : null,
           narrowed && c.series_match === false ? el('span', { class: 'muted small' }, '其它作品') : null,
-          c.in_library ? el('span', { class: 'badge ok' }, '已在角色库') : null,
-          el('span', { class: 'muted small mono' }, `${c.post_count} 张`));
+          c.in_library ? el('span', { class: 'badge ok' }, `已在${cfg.title}`) : null,
+          el('span', { class: 'muted small mono' }, `${c.post_count} 张`),
+          c.desc ? el('span', { class: 'db-desc muted small' }, c.desc) : null);
         return row;
       })) : null);
   }
@@ -356,7 +379,7 @@ export function createLibrary(kind) {
         source: 'manual', edited: [], post_count: 0 };
     } else {
       try { st.edit = await api.get(`${base}/${id}`); } catch (e) { toastError(e); st.view = 'list'; return; }
-      if (cfg.full) st.family = await loadFamily(st.edit);
+      if (cfg.variants) st.family = await loadFamily(st.edit);
     }
     st.snap = snapOf(st.edit);
     drawEditor();
@@ -508,7 +531,8 @@ export function createLibrary(kind) {
       if (!cfg.full) return doRefresh(true);   // 画师只更新作品数与别名，没有可被覆盖的字段
       modal({
         title: '从 Danbooru 重新获取', stack: true,
-        body: c.edited.length ? `手动改过的项：${c.edited.map(k => FIELD_ZH[k] || k).join('、')}` : '会用 Danbooru 的最新资料更新简介、作品与外貌标签。',
+        body: c.edited.length ? `手动改过的项：${c.edited.map(k => FIELD_ZH[k] || k).join('、')}`
+          : cfg.members ? '会用 Danbooru 的最新资料更新简介、常见标签与常穿的角色。' : '会用 Danbooru 的最新资料更新简介、作品与外貌标签。',
         actions: [
           { label: '保留手动修改', sub: '只更新没改过的项', kind: 'accent', onClick: () => doRefresh(true) },
           { label: '全部覆盖', sub: '丢弃手动修改（补充说明与名称映射不受影响）', kind: '', onClick: () => doRefresh(false) },
@@ -520,6 +544,7 @@ export function createLibrary(kind) {
     const del = async () => {
       const msg = c.parent_tag
         ? `「${c.name}」及其名称映射会从${cfg.title}删除；以后不会再自动存回来；需要时在本体的「造型变体」里点「存入」。`
+        : cfg.members ? `「${c.name}」及其名称映射会从${cfg.title}删除；以后不会再自动存回来；需要时用「模糊搜索」或「直接添加」加回来。`
         : `「${c.name}」${nVar ? `和它的 ${nVar} 个造型变体` : ''}及名称映射会从${cfg.title}删除；下次检索会重新从 Danbooru 获取。`;
       if (!await confirmDialog(`删除这个${c.parent_tag ? '变体' : cfg.noun}？`, msg, '删除', true)) return;
       try { await api.del(`${base}/${c.id}`); clearArtistHints(); toast('已删除', 'ok'); st.view = 'list'; load(); }
@@ -542,18 +567,32 @@ export function createLibrary(kind) {
           c.parent.id ? el('a', { href: '#', onclick: (e) => { e.preventDefault(); openEditor(c.parent.id); } }, c.parent.name || sp(c.parent.tag))
             : `${sp(c.parent.tag)}（正在后台存入角色库）`, ' · '] : null,
         `来源：${c.source === 'manual' ? '手动新增' : 'Danbooru'}`, c.post_count ? ` · ${c.post_count} 张图` : '',
-        c.fetched_at ? ` · 获取于 ${fmtTime(c.fetched_at)}` : '') : null,
+        c.fetched_at ? ` · 获取于 ${fmtTime(c.fetched_at)}`
+          : cfg.members && c.source === 'danbooru' ? ' · 常见标签与常穿的角色还没取到（后台补齐中；也可以点「从 Danbooru 重新获取」）' : '') : null,
       familyBar(),
       el('div', { class: 'svc' },
         el('div', { class: cfg.full ? 'grid3 eq' : 'grid2' },
           field('名称', 'name', name, '显示用'),
           field(cfg.tagLabel, 'tag', tag, cfg.tagHint),
           cfg.full ? field('作品标签', 'series_tag', series, '写进 series') : null),
-        cfg.full && !isNew && !c.parent_tag ? field('造型变体', null, variantBox(c), `Danbooru 为这个角色的服装 / 形态单独建的标签；图片 ${MIN_POSTS} 张以上的会自动存入角色库`) : null,
-        field('名称映射', null, namesBox, `这些名字都会对应到这个${cfg.noun}`),
-        cfg.full ? field('外貌标签', 'appearance', appBox, '百分比 = 该角色图片中出现的比例') : null,
+        cfg.variants && !isNew && !c.parent_tag ? field('造型变体', null, variantBox(c), `Danbooru 为这个角色的服装 / 形态单独建的标签；图片 ${MIN_POSTS} 张以上的会自动存入角色库`) : null,
+        cfg.members && !isNew ? field('常穿的角色', null, membersBox(c), '百分比 = 这套服装的图片里出现这个角色的比例；「wiki」= Danbooru 简介里提到的') : null,
+        field('名称映射', null, namesBox, cfg.members ? '描述里写了这些名字，就认成这套服装（只在同一作品的角色身上认）' : `这些名字都会对应到这个${cfg.noun}`),
+        cfg.full ? field(cfg.members ? '常见标签' : '外貌标签', 'appearance', appBox, cfg.appHint) : null,
         field('补充说明', 'notes', notes, cfg.full ? '发给 LLM，优先于外貌标签' : '发给 LLM'),
         cfg.full ? field('简介', 'wiki', wiki, '来自 Danbooru wiki') : null));
+  }
+
+  // 服装详情的「常穿的角色」：在角色库里的可点开
+  function membersBox(c) {
+    const ms = c.members || [];
+    if (!ms.length) return el('div', { class: 'muted small' }, c.fetched_at ? '没有特别常穿这套服装的角色' : '—');
+    return el('div', { class: 'chips' }, ms.map(m => {
+      const label = [m.name || sp(m.tag), el('em', {}, m.freq != null ? ` ${Math.round(m.freq * 100)}%` : ' wiki')];
+      return m.id ? el('a', { class: 'chip link', href: '#', title: `${sp(m.tag)}\n在角色库中打开`,
+        onclick: (e) => { e.preventDefault(); emit('goto-panel', 'chars'); emit('chars-open', m.id); } }, label)
+        : el('span', { class: 'chip', title: `${sp(m.tag)}\n不在角色库` }, label);
+    }));
   }
 
   return { render };

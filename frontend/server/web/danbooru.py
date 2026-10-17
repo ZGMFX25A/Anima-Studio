@@ -15,7 +15,7 @@ from .net import WebError, client
 
 BASE = "https://danbooru.donmai.us"
 UA = "AnimaStudio/1.0 (local prompt helper)"
-CAT_ARTIST, CAT_COPYRIGHT, CAT_CHARACTER = 1, 3, 4
+CAT_GENERAL, CAT_ARTIST, CAT_COPYRIGHT, CAT_CHARACTER = 0, 1, 3, 4
 MIN_INTERVAL = 0.35              # 请求间隔（Danbooru 建议持续访问约 1 次/秒以内，短时可更快）
 WIKI_CHARS = 600
 APPEARANCE_TOP = 25
@@ -259,7 +259,7 @@ def clean_dtext(body: str, limit: int = WIKI_CHARS) -> str:
     text = re.split(r"^\s*(?:See also|External links?|Related tags?|Tag group)\s*:?\s*$", text, flags=re.M | re.I)[0]
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
-    text = re.sub(r"\n\s*Appearance\s*$", "", text, flags=re.I).strip()
+    text = re.sub(r"\n\s*(?:Appearance|Members|Examples?)\s*$", "", text, flags=re.I).strip()   # 内容全是图片的小节只剩标题
     if len(text) > limit:
         cut = text[:limit]
         dot = max(cut.rfind(". "), cut.rfind("。"), cut.rfind("\n"))
@@ -362,6 +362,117 @@ def qualifier(variant: str, base: str) -> str:
     if m and len(qs) > 1:
         qs = qs[:-1]
     return " ".join(qs).replace("_", " ") or variant.replace("_", " ")
+
+
+# ───────────── 作品服装：Danbooru 单独建的服装标签（普通标签，不挂在角色下） ─────────────
+
+# 标签名或 wiki 第一句看得出是服装（社团、道具、梗图这类同样带作品括号的普通标签排除掉）
+_OUTFIT_NAME = re.compile(r"uniform|outfit|costume|clothes|clothing|dress|swimsuit|attire|wear|suit|kimono|yukata|armor"
+                          r"|bikini|leotard|apron|jersey|gown")
+_OUTFIT_WIKI = re.compile(r"\b(?:outfits?|uniforms?|costumes?|clothes|clothing|attire|dress(?:es)?|worn|wears?|swimsuits?)\b",
+                          re.I)
+_LINK = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
+
+
+def _first_sentence(body: str) -> str:
+    text = re.sub(r"\s+", " ", _LINK.sub(lambda m: m.group(1), body or "")).strip()
+    return re.split(r"(?<=[.!?。])\s", text)[0][:240]
+
+
+def _wiki_members(body: str, series: str, skip: str) -> list[str]:
+    """wiki 里提到的这个作品的角色（[[Yuuka (Blue Archive)|]] → yuuka_(blue_archive)），包括造型变体。"""
+    out = []
+    for m in _LINK.finditer(body or ""):
+        t = re.sub(r"\s+", "_", m.group(1).strip().lower())
+        if t != skip and t.endswith(f"_({series})") and t not in out:
+            out.append(t)
+    return out
+
+
+GENERIC_POSTS = 100      # 去掉作品括号后的写法本身是这么多图的普通标签时，算撞了通用说法
+
+
+def series_outfits(series: str, min_posts: int = 10) -> list[dict]:
+    """作品服装目录（3–5 次请求）：标签括号里写着这个作品、名字或 wiki 第一句看得出是服装的普通标签。
+
+    返回 [{tag, post_count, other_names, wiki, members, generic}]（图片多的在前）；members 是 wiki 里提到的这个作品的角色；
+    generic：去掉作品括号后的写法本身就是常见的普通标签（china_dress_(love_live!) → china_dress），这个写法不拿来认服装。
+    """
+    pat = f"*_({series})"
+    tags = _get("/tags.json", {"search[name_matches]": pat, "search[category]": CAT_GENERAL,
+                               "search[post_count]": f">={min_posts}", "search[order]": "count", "limit": 200,
+                               "only": "name,post_count"}) or []
+    pages = {x["title"]: x for x in _get("/wiki_pages.json", {"search[title_ilike]": pat,
+                                                               "search[tag][category]": CAT_GENERAL, "limit": 200,
+                                                               "only": "title,other_names,body"}) or []
+             if x.get("title")}
+    out = []
+    for x in tags:
+        tag, page = x.get("name") or "", pages.get(x.get("name") or "") or {}
+        if not tag or not (_OUTFIT_NAME.search(tag[:-len(series) - 3]) or _OUTFIT_WIKI.search(_first_sentence(page.get("body")))):
+            continue
+        out.append({"tag": tag, "post_count": x.get("post_count") or 0,
+                    "other_names": [n for n in (page.get("other_names") or []) if n][:20],
+                    "wiki": clean_dtext(page.get("body") or ""),
+                    "members": _wiki_members(page.get("body") or "", series, tag)})
+    plain = _plain_tags([x["tag"][:-len(series) - 3] for x in out]) if out else {}
+    for x in out:
+        p = plain.get(x["tag"][:-len(series) - 3]) or {}
+        x["generic"] = (p.get("category") == CAT_GENERAL and (p.get("post_count") or 0) >= GENERIC_POSTS
+                        and p.get("name") != x["tag"])
+    return out
+
+
+def _plain_tags(names: list[str]) -> dict[str, dict]:
+    """去掉作品括号后的写法在 Danbooru 上对应的标签（别名顺着查到正式标签：china_dress → qipao）。"""
+    info = _tag_info(names)
+    zero = [n for n in names if n in info and not info[n].get("post_count")]
+    if zero:
+        al = _get("/tag_aliases.json", {"search[antecedent_name_comma]": ",".join(zero), "search[status]": "active",
+                                        "only": "antecedent_name,consequent_name", "limit": len(zero)}) or []
+        to = {a["antecedent_name"]: a["consequent_name"] for a in al if a.get("consequent_name")}
+        real = _tag_info(list(set(to.values())))
+        info.update({n: real.get(t) or {} for n, t in to.items()})
+    return info
+
+
+def outfit_profile(tag: str, post_count: int | None = None, page: dict | None = None) -> dict:
+    """一套服装的资料：wiki、别名，以及一次不分类别的共现查询里的常见标签、常穿的角色、作品。
+
+    page：作品服装目录里已取到的 wiki（{other_names, body}），给了就不再单独取。
+    """
+    if page is None:
+        page = _get(f"/wiki_pages/{tag}.json") or {}
+    d = _get("/related_tag.json", {"query": tag, "limit": 100}) or {}
+    stop = _stoplist()
+    general, members, copyright_ = [], [], ""
+    for x in d.get("related_tags", []):
+        t, f = (x.get("tag") or {}), round(float(x.get("frequency") or 0), 2)
+        name, cat = t.get("name"), t.get("category")
+        if not name or name == tag:
+            continue
+        if cat == CAT_GENERAL and name not in stop and f >= 0.08:
+            general.append({"tag": name, "freq": f})
+        elif cat == CAT_CHARACTER and f >= 0.05:
+            members.append({"tag": name, "freq": f})
+        elif cat == CAT_COPYRIGHT and f >= 0.3 and not copyright_:
+            copyright_ = name
+    m = re.search(r"_\(([^()]+)\)$", tag)
+    series = m.group(1) if m and (not copyright_ or _same_series(copyright_, m.group(1))) else copyright_
+    have = {x["tag"] for x in members}
+    members += [{"tag": t, "freq": None} for t in _wiki_members(page.get("body") or "", series, tag) if t not in have]
+    if post_count is None:
+        info = _get("/tags.json", {"search[name]": tag, "only": "post_count"}) or [{}]
+        post_count = info[0].get("post_count") if info else None
+    return {"tag": tag, "series_tag": series, "post_count": post_count or 0,
+            "other_names": [n for n in (page.get("other_names") or []) if n][:20],
+            "wiki": clean_dtext(page.get("body") or ""), "appearance": general[:APPEARANCE_TOP], "members": members[:16]}
+
+
+def find_outfit(name: str) -> list[dict]:
+    """服装库「直接添加」：补全（普通标签，日文名 / 英文名都能命中），带作品括号的（专门的服装）优先。"""
+    cands = autocomplete(name.lstrip("@"), category=CAT_GENERAL)
+    return sorted(cands, key=lambda c: (not re.search(r"_\([^()]+\)$", c["tag"]), -c["post_count"]))[:4]
 
 
 def find_artist(name: str, name_en: str) -> list[dict]:

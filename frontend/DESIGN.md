@@ -429,7 +429,7 @@ AI 填写卡片里的两个开关（「联网检索（角色 / 画师）」「�
 | POST | `/api/web/settings/reset-tagsearch` | 恢复默认（公共池） |
 | POST | `/api/web/test/{danbooru\|tagsearch}` | 测试连接（tagsearch 消耗 3 点，返回剩余额度） |
 | POST | `/api/web/tagsearch-cache/clear` | 清空标签参考缓存 |
-| GET / POST | `/api/library/{characters\|artists}` | 角色库 / 画师库搜索、手动新增 |
+| GET / POST | `/api/library/{characters\|artists\|outfits}` | 角色库 / 画师库 / 服装库搜索、手动新增（只有画师库能手动新增） |
 | POST | `/api/library/{kind}/fetch` | 按名字从 Danbooru 添加 |
 | GET / PUT / DELETE | `/api/library/{kind}/{id}` | 查看 / 编辑 / 删除 |
 | POST | `/api/library/{kind}/{id}/refresh` | 从 Danbooru 重新获取（`keep_edited`）；角色本体同时刷新变体列表 |
@@ -437,8 +437,11 @@ AI 填写卡片里的两个开关（「联网检索（角色 / 画师）」「�
 | POST | `/api/library/characters/import` | 按选中的标签导入（`tag` `name`），本体与变体在后台补齐 |
 | POST | `/api/library/characters/{id}/variants` | 重新获取本体的变体列表 |
 | POST | `/api/library/characters/{id}/variants/fetch` | 取某个变体存入角色库（`tag`，不受图片数门槛限制） |
+| GET / PUT / DELETE / POST …/fetch、…/refresh | `/api/library/outfits…` | 服装库（§9.8），与角色库同一套；详情的 `members` 附角色库里的 `id` `name`；不能手动新增 |
+| POST | `/api/library/outfits/search` | 服装库模糊搜索（`name` 可空、`series`）→ `{items: [{tag, post_count, exact, series_match, desc, in_library}], series_tags, offline}` |
+| POST | `/api/library/outfits/import` | 按选中的标签存入服装库（删除过的也可以这样加回来） |
 
-`/api/llm/fill` 新增参数 `web_character`、`tag_reference`，响应新增 `research`（角色检索结果与标签参考摘要）。
+`/api/llm/fill` 新增参数 `web_character`、`tag_reference`，响应新增 `research`（角色检索结果与标签参考摘要；2026-10-17 起另有 `outfits`，角色条目另有 `outfit_tag` `outfit_options`）。
 
 ### 9.6 造型变体缓存、模糊搜索（2026-10-17）
 
@@ -477,6 +480,34 @@ AI 填写卡片里的两个开关（「联网检索（角色 / 画师）」「�
 
 - AI 填写「参考资料」里角色一行标出服装（「穿睡衣」）、「造型变体」，以及「没对上变体」（附了可选变体，交给 AI 判断）。
 - 接口：`POST /api/library/artists/resolve`（`names` → 能对上画师库的非标准写法）。
+
+### 9.8 服装库：作品服装（2026-10-17）
+
+起因：Danbooru 上有些服装单独建了标签，但它是**普通标签**、几个角色共用，不挂在任何角色下（如 `mischievous_straight_uniform_(blue_archive)`，
+优香 / 爱丽丝 / 日步美 / 阿露的偶像团体服装），§9.7 只认角色下面的造型变体，认不出来；用户往往也只会说「偶像服」，按名字查不到。
+
+**和造型变体的区别**：变体是**角色标签**（类别 4），属于一个角色，标签以角色名开头，写进 character（替换本体）；
+作品服装是**普通标签**（类别 0），几个角色共用，写进 appearance，character 仍写本体。认的时候先比变体（更具体），再比作品服装，都对不上时两边都交给 AI。
+
+| # | 问题 | 结论 |
+|---|---|---|
+| 1 | 存在哪 | 新建**服装库**（菜单 → 服装库，与角色库 / 画师库同一套界面）：同一个 characters.db 的 `outfits` + `outfit_names`；另有 `outfit_series` 按作品缓存服装目录 |
+| 2 | 怎么找到一个作品的服装 | 按作品取一次目录（**3–5 次请求**，30 天内不重取）：`/tags.json` 标签括号是该作品的普通标签 + `/wiki_pages.json` 同一批标签的 wiki（一次取完）；标签名或 wiki 第一句看得出是服装的才算（社团、道具、梗图排除）。wiki 顺带给出日文别名、简介和里面提到的角色；再查一次去掉作品括号后的写法是不是常见普通标签（见 #11） |
+| 3 | 什么时候取 | 和造型变体同一趟后台（角色存入 / 用到时）；AI 填写写了服装、变体没对上、而这个作品的目录从没取过时当场取（约 3–7 秒） |
+| 4 | 存入 | 图片 **20 张**以上的自动存入服装库，常见标签与常穿的角色每套再查 1 次（一次不分类别的共现查询同时给出常见标签、角色、作品），后台补齐；不到 20 张的留在目录里，名字对上（明确用到）时照存；用户删除过的不再自动存回 |
+| 5 | 认服装 | 服装原文里**整个出现**这个作品某套服装的名字才认定：名称、名称映射、Danbooru 别名、标签去掉作品括号（再去掉 uniform / outfit 这类泛称后还剩两个词以上的也算）；比较时去掉空格和符号（イタズラ☆ストレート = イタズラストレート）。只写泛称（uniform）或名字的一部分（cheerleader、イタズラ）不认定，交给 #6 |
+| 6 | 对不上名字 | 把这个作品的服装（最多 8 套：这个角色穿过的在前，按穿着比例；其余按图片数）作为「可选的作品服装」附给填写的 LLM **参考**（`fill/user/character_item.md` + `fill/system/web_character.md`），默认不用，见 #12 |
+| 7 | 对上了 | 资料块「联网检索：服装资料」（`fill/user/outfit_*.md`，规则 `fill/system/web_outfit.md`）：服装标签、谁穿、别名、简介、常见标签、补充说明；角色条目标「描述中的服装是这套作品服装」 |
+| 8 | 没有角色只写了服装名 | 描述里直接出现服装库里某套的名字（≥4 个字符）也认（只查本地），资料块里「穿的人物」为空，由 LLM 按描述判断 |
+| 9 | 服装库的模糊搜索 | 作品必填、服装名可空：列出该作品的全部服装（带简介），名字对上的排前面；「偶像服」这种对不上名字时照列全部，由用户看简介挑；再接 Danbooru 补全（日文 / 英文名）的结果 |
+| 10 | 不做的 | 不手动新增（自己设计的服装写在人设的服装差分里）；人设已覆盖的角色不认作品服装（人设有自己的造型） |
+| 11 | 撞了常见名字（用户提出） | 有些作品服装的标签写法本身就是通用说法：`china_dress_(love_live!)`（china_dress 是 qipao 的别名）、`white_day_(love_live!)`、`constellation_(love_live!)`。取目录时查去掉作品括号后的写法（别名顺着查到正式标签），是 100 张图以上的普通标签就标为撞名：这个写法和等于它的名称不拿来认，只认专有别名和名称映射里别的写法；描述里直接写名字（#8）也一样 |
+| 12 | 「偶像服」可能是要新设计（用户提出） | 附给 LLM 的作品服装默认不用：只有描述明确指那一套才用——写了名字 / 别名（可以只写一部分），或指定说法（「优香的偶像服」「她们团体的那套」「官方 / 活动 / 游戏里的偶像服」）；只说了一类服装（「穿偶像服的优香」「泳装」）或要求设计 / 原创的，按通用标签写（idol clothes + 描述的样式）；拿不准按通用写。造型变体的规则（§9.7 #4）不变 |
+
+- 详情页：名称、服装标签、作品、**常穿的角色**（比例；在角色库里的可点开；「wiki」= 简介里提到的）、名称映射（只在同一作品的角色身上认）、常见标签、补充说明、简介。还没补齐时标「常见标签与常穿的角色还没取到」。
+- 作品键：角色标签括号里的作品（`aris_(blue_archive)` → blue_archive、`kaga_(kancolle)` → kancolle），没有括号时用角色的作品标签。已知局限：服装标签用的作品写法与角色不同时（如 idolmaster 与 idolmaster_cinderella_girls）找不到。
+- AI 填写「参考资料」：角色一行标「作品服装」或「附 N 套作品服装供 AI 挑」；对上的服装单独一行（服装库 · 谁穿 · 标签），可「在服装库中编辑」。
+- 后台：`server/web/outfits.py`（目录、补齐、认服装、模糊搜索），由 `variant_cache` 的后台线程顺带调用。
 
 ---
 

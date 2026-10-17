@@ -165,6 +165,7 @@ def _fill(req: dict, rid: str) -> dict:
     # —— 联网检索（可选）：识别角色与画师 → 资料库 / Danbooru；标签参考 → DanbooruSearch，两者并行 ——
     want_web, want_tags = bool(req.get("web_character")), bool(req.get("tag_reference"))
     found, found_art, results, artists, tags, tag_error, research_log = [], [], [], [], None, None, {}
+    outfit_entries: list[dict] = []
     if want_web or want_tags:
         with ThreadPoolExecutor(max_workers=2) as ex:
             fut = ex.submit(tagsearch.search, desc, safety != "safe") if want_tags and desc else None
@@ -192,6 +193,7 @@ def _fill(req: dict, rid: str) -> dict:
                                if not (r["character"] and ({r["character"]["tag"], (r.get("base") or {}).get("tag")}
                                                            & covered_tags))]
                     artists = research.research_artists(found_art)
+                    outfit_entries = research.research_outfits(results, desc)
                 except (client.LLMError, WebError, ValueError) as e:
                     if retry.is_cancelled(rid):
                         raise client.LLMError("已取消") from e
@@ -214,9 +216,13 @@ def _fill(req: dict, rid: str) -> dict:
         brief = lambda lst: [{"query": r["query"], "status": r["status"], "tag": (r["character"] or {}).get("tag"),
                               **({"variant_of": r["base"]["tag"]} if r.get("base") else {}),
                               **({"fuzzy": r["fuzzy"]} if r.get("fuzzy") else {}),
-                              **({"options": [v["tag"] for v in r["options"]]} if r.get("options") else {})}
+                              **({"options": [v["tag"] for v in r["options"]]} if r.get("options") else {}),
+                              **({"outfit": r["outfit"]["tag"]} if r.get("outfit") else {}),
+                              **({"outfit_options": [o["tag"] for o in r["outfit_options"]]}
+                                 if r.get("outfit_options") else {})}
                              for r in lst]
         research_log.update(found=found, found_artists=found_art, results=brief(results), artists=brief(artists),
+                            outfits=[{"tag": e["outfit"]["tag"], "wearers": e["wearers"]} for e in outfit_entries],
                             tags=(tags or {}).get("results"), tag_error=tag_error)
     persona_text = personas.block(persona_entries)
     persona_info = [{"id": e["persona"]["id"], "name": e["persona"]["name"], "matched": e["matched"],
@@ -226,6 +232,7 @@ def _fill(req: dict, rid: str) -> dict:
     if persona_entries:
         research_log["personas"] = persona_info
     char_text = research.character_block(results, labels)
+    outfit_text = research.outfit_block(outfit_entries)
     artist_text = research.artist_block(artists)
     tag_text = research.tag_block(tags)
 
@@ -263,6 +270,8 @@ def _fill(req: dict, rid: str) -> dict:
         sections.append("persona.md")
     if char_text:
         sections.append("web_character.md")
+    if outfit_text:
+        sections.append("web_outfit.md")
     if artist_text:
         sections.append("web_artist.md")
     if tag_text:
@@ -273,7 +282,7 @@ def _fill(req: dict, rid: str) -> dict:
     parts: list[dict] = []
     img_log = [f"{r['label']} " + ("（缓存）" if r["cached"] else f"{r['size'][0]}x{r['size'][1]}" if r.get("size")
                                    else "（未发送）") for r in v_res]
-    blocks = (vision_text, persona_text, char_text, artist_text, tag_text)
+    blocks = (vision_text, persona_text, char_text, outfit_text, artist_text, tag_text)
     for block in blocks:
         if block:
             parts.append({"type": "text", "text": block})
@@ -307,7 +316,7 @@ def _fill(req: dict, rid: str) -> dict:
     log["warnings"] = warnings
     _write_log(log)
     return {"fields": fields, "warnings": warnings, "elapsed": time.time() - t_start, "mode": mode,
-            "research": research.summary(results, artists, tags, tag_error, want_web, persona_info)
+            "research": research.summary(results, artists, tags, tag_error, want_web, persona_info, outfit_entries)
             if (want_web or want_tags or persona_info) else None,
             "recognition": {"model": vm.get("name") or vm["id"],
                             "items": [{k: r.get(k) for k in ("label", "kind", "text", "error", "cached", "elapsed")}

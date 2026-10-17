@@ -266,11 +266,13 @@ function renderResearch(r) {
   if (!r) { box.hidden = true; return; }
   const chars = r.characters || [];
   const arts = r.artists || [];
+  const outs = r.outfits || [];
   const tags = r.tags;
   const pers = r.personas || [];
   const parts = [];
   if (pers.length) parts.push(`${pers.length} 个人设`);
   if (r.characters) parts.push(`${chars.filter(c => c.tag).length} 个角色`);
+  if (outs.length) parts.push(`${outs.length} 套服装`);
   if (r.artists && arts.length) parts.push(`${arts.filter(c => c.tag).length} 个画师`);
   if (tags) parts.push(tags.error ? '标签参考不可用' : `${tags.count} 个标签参考`);
   $('#llm-research-sum').textContent = `参考资料：${parts.join(' · ') || '无'}`;
@@ -287,7 +289,10 @@ function renderResearch(r) {
       c.outfit ? el('span', { class: 'muted small' }, `穿${c.outfit}`) : null,
       c.tag ? el('span', { class: 'rs-tag', title: '标准标签' }, '→ ', art ? '@' : '', c.tag.replace(/_/g, ' ')) : null,
       c.variant_of ? el('span', { class: 'badge small-badge', title: `本体：${c.variant_of.replace(/_/g, ' ')}` }, '造型变体') : null,
-      c.options ? el('span', { class: 'muted small', title: '角色库里没有对上的变体，交给 AI 按描述判断' }, '没对上变体') : null,
+      c.outfit_tag ? el('span', { class: 'badge small-badge', title: `作品服装（服装库）：${c.outfit_tag.replace(/_/g, ' ')}` }, '作品服装') : null,
+      c.options && !c.outfit_tag ? el('span', { class: 'muted small', title: '角色库里没有对上的变体，交给 AI 按描述判断' }, '没对上变体') : null,
+      c.outfit_options ? el('span', { class: 'muted small', title: `服装名字没对上，把这个作品的 ${c.outfit_options} 套服装附给 AI 参考：描述明确指其中一套（如「优香的偶像服」「活动里那套」）才用，只说了一类服装（如「偶像服」）按通用的写` },
+        `附 ${c.outfit_options} 套作品服装参考`) : null,
       c.series_tag ? el('span', { class: 'muted small' }, c.series_tag.replace(/_/g, ' ')) : null,
       c.post_count ? el('span', { class: 'muted small' }, `${c.post_count} 张`) : null,
       c.edited ? el('span', { class: 'muted small' }, '已手动编辑') : null,
@@ -304,7 +309,19 @@ function renderResearch(r) {
     x.outfit ? el('span', { class: 'muted small' }, `造型 ${x.outfit}`) : null,
     el('span', { class: 'grow' }),
     el('button', { class: 'btn ghost small', onclick: () => { emit('goto', 'personas'); emit('persona-open', x.id); } }, '打开人设'));
-  const rows = [...pers.map(personaRow), ...chars.map(c => row(c, 'characters')), ...arts.map(c => row(c, 'artists'))];
+  const outfitRow = (o) => el('div', { class: 'rs-row' },
+    el('span', { class: 'badge' }, '服装'),
+    el('span', { class: 'badge ok' }, '服装库'),
+    el('span', { class: 'rs-name' }, o.name),
+    o.wearers.length ? el('span', { class: 'muted small' }, `${o.wearers.join('、')} 穿`) : el('span', { class: 'muted small' }, '描述里直接写了名字'),
+    el('span', { class: 'rs-tag', title: '服装标签（写进 appearance）' }, '→ ', o.tag.replace(/_/g, ' ')),
+    o.series_tag ? el('span', { class: 'muted small' }, o.series_tag.replace(/_/g, ' ')) : null,
+    o.post_count ? el('span', { class: 'muted small' }, `${o.post_count} 张`) : null,
+    o.edited ? el('span', { class: 'muted small' }, '已手动编辑') : null,
+    el('span', { class: 'grow' }),
+    el('a', { class: 'small', href: `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(o.tag)}`, target: '_blank', rel: 'noreferrer' }, 'Danbooru'),
+    el('button', { class: 'btn ghost small', onclick: () => { emit('goto', 'menu'); emit('goto-panel', 'outfits'); emit('outfits-open', o.id); } }, '在服装库中编辑'));
+  const rows = [...pers.map(personaRow), ...chars.map(c => row(c, 'characters')), ...outs.map(outfitRow), ...arts.map(c => row(c, 'artists'))];
   if (r.characters && !chars.length && !arts.length) rows.push(el('div', { class: 'muted small' }, '描述中没有识别到作品角色或画师'));
   let tagNode = null;
   if (tags) {
