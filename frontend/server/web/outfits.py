@@ -6,8 +6,10 @@
 - 服装库只存用到的那套（用户定的）：名字对上的、点名查到的、AI 从可选项里选用的、在服装库里添加 / 导入的。
 - 什么时候取：角色存入 / 用到时随造型变体在后台一起补（variant_cache）；AI 填写写了服装、变体没对上、
   而这个作品的目录从没取过时当场取。
-- 认服装（AI 填写）：描述的服装写法里整个出现了这个作品某套服装的名字（名称、名称映射、Danbooru 别名、标签去掉作品与
-  uniform 这类泛称）才认定；标签写法撞了常见普通标签的（china_dress_(love_live!)）不拿标签写法认。
+- 认服装（AI 填写）：描述的服装写法里整个出现了这个作品某套服装的**完整**名字（名称、名称映射、Danbooru 别名、
+  标签去掉作品括号）才认定；标签写法撞了常见普通标签的（china_dress_(love_live!)）不拿标签写法认。
+  不认「去掉 uniform / swimsuit 这类泛称后剩下的部分」：同一所学校的几套服装就差在这个词上
+  （trinity general school sportswear 曾被认成 trinity general school swimsuit）。
   对不上时把这个作品的服装（这个角色穿过的在前）作为可选项附给填写的 LLM：只有描述明确指那一套时才用，
   只说了一类服装（「偶像服」）或要新设计时按通用标签写（规则在 fill/system/web_character.md）。
 """
@@ -32,19 +34,10 @@ log = logging.getLogger("frontend.outfits")
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
-# 服装的泛称：只写这些词不算点名某套服装（「uniform」不能对上所有制服）
-_GENERIC = {"uniform", "uniforms", "outfit", "outfits", "costume", "costumes", "clothes", "clothing", "dress", "swimsuit",
-            "attire", "wear", "suit", "school", "set"}
-
 
 def _key(text: str) -> str:
     """比对用：全半角统一、不分大小写、去掉空格与符号（イタズラ☆ストレート = イタズラストレート）。"""
     return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", text or "").casefold())
-
-
-def _text_key(text: str) -> str:
-    """描述里的服装写法：英文去掉泛称（mischievous straight uniform → mischievousstraight）。"""
-    return _key(" ".join(w for w in re.split(r"[\s_]+", text or "") if w.casefold() not in _GENERIC))
 
 
 def _phrase(tag: str) -> str:
@@ -59,22 +52,18 @@ def series_key(ch: dict) -> str:
 
 
 def cues(row: dict, generic: set[str] = frozenset()) -> set[str]:
-    """一套服装的名字：名称、名称映射、Danbooru 别名、标签（去掉作品括号；再去掉泛称后还剩两个词以上的也算）。
+    """一套服装的完整名字：名称、名称映射、Danbooru 别名、标签（含去掉作品括号的写法）。
 
     generic：去掉作品括号后撞了常见普通标签的服装（china_dress_(love_live!)），这个写法（以及等于它的名称）不算名字，
     只认别名和名称映射里别的写法——「china dress」多半是泛指旗袍，不是 Love Live! 那一套。
     """
-    words = _phrase(row["tag"]).split()
-    core = [w for w in words if w not in _GENERIC]
-    plain = {_key(" ".join(words)), _key(" ".join(core))} if row["tag"] in generic else set()
-    out = {row.get("name", ""), *row.get("names", []), *row.get("other_names", []), " ".join(words)}
-    if len(core) >= 2:
-        out.add(" ".join(core))
+    phrase = _phrase(row["tag"])
+    plain = {_key(phrase)} if row["tag"] in generic else set()
     skip = _key(row.get("series_tag", ""))
     keys = set()
-    for c in out:
+    for c in {row.get("name", ""), *row.get("names", []), *row.get("other_names", []), phrase}:
         k = _key(c)
-        if k and k != skip and k not in plain and len(k) >= (4 if k.isascii() else 3) and len(k) <= 40:
+        if k and k != skip and k not in plain and len(k) >= (4 if k.isascii() else 3) and len(k) <= 80:
             keys.add(k)
     return keys
 
@@ -202,7 +191,7 @@ def pick(base: dict, outfit: str, texts: list[str], fetch: bool = True) -> tuple
             log.info("服装库：取 %s 的服装目录失败（%s）", s, e)
     rows = OUTFITS.of_series(s)
     rows += _unsaved(s, {r["tag"] for r in rows})
-    keys = [k for k in (_text_key(t) for t in texts) if k]     # 只写了 uniform 这类泛称时没有名字可比
+    keys = [k for k in (_key(t) for t in texts) if k]
     generic = OUTFITS.generic_tags()
     best, best_len = None, 0
     for row in rows:
@@ -236,7 +225,7 @@ def resolve(q: dict) -> tuple[dict | None, str]:
         if row:
             return OUTFITS.get(row["id"]), ""
     s = danbooru._skey(q.get("series", ""))
-    texts = [k for k in (_text_key(n) for n in names) if k]
+    texts = [k for k in (_key(n) for n in names) if k]
     generic = OUTFITS.generic_tags()
     best, best_len = None, 0
     for row in OUTFITS.all_rows():
@@ -268,13 +257,30 @@ def resolve(q: dict) -> tuple[dict | None, str]:
 
 
 def scan(description: str, skip: set[int]) -> list[dict]:
-    """描述里直接写了服装库里某套服装的名字（没有跟着角色，如「穿イタズラ☆ストレート的女孩」）。只查本地。"""
+    """描述里直接写了服装库里某套服装的名字（没有跟着角色，如「穿イタズラ☆ストレート的女孩」）。只查本地。
+
+    长的名字先占：被另一套更长的名字整个盖住的不算（skip 里已经认出的那几套也参与占位）。
+    """
     d = _key(description)
     if not d:
         return []
     generic = OUTFITS.generic_tags()
-    out = [row for row in OUTFITS.all_rows()
-           if row["id"] not in skip and any(len(c) >= 4 and c in d for c in cues(row, generic))]
+    found = []      # (起点, 终点, 条目)：每套取它在描述里最长的那个名字
+    for row in OUTFITS.all_rows():
+        best = None
+        for c in cues(row, generic):
+            i = d.find(c) if len(c) >= 4 else -1
+            if i >= 0 and (not best or len(c) > best[1] - best[0]):
+                best = (i, i + len(c))
+        if best:
+            found.append((*best, row))
+    taken, out = [], []
+    for a, b, row in sorted(found, key=lambda x: x[0] - x[1]):
+        if any(a >= x and b <= y for x, y in taken):
+            continue
+        taken.append((a, b))
+        if row["id"] not in skip:
+            out.append(row)
     return sorted(out, key=lambda r: -r["post_count"])[:3]
 
 
