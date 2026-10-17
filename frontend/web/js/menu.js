@@ -28,6 +28,7 @@ let menuVisible = false;
 export function initMenu() {
   libs.chars = createLibrary('characters');
   libs.artists = createLibrary('artists');
+  libs.outfits = createLibrary('outfits');
   $('#menu-nav').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (b) showPanel(b.dataset.panel);

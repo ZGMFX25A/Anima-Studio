@@ -1,8 +1,9 @@
-"""资料库（data/characters.db，永久保存）：角色库与画师库。
+"""资料库（data/characters.db，永久保存）：角色库、画师库与服装库。
 
 每个库 = 资料表 + 名称映射表。联网检索结果自动存入；手动改过的字段记为「已编辑」，自动检索永远不会覆盖。
 角色的造型变体（Danbooru 单独建的角色标签，如 aris_(maid)_(blue_archive)）也是普通角色行，parent_tag 指向本体；
-本体行的 variants 缓存变体列表（见 web/variants.py）。
+本体行的 variants 缓存变体列表（见 web/variant_cache.py）。
+服装库存 Danbooru 单独建的服装标签（普通标签，不挂在角色下，如 mischievous_straight_uniform_(blue_archive)），见 web/outfits.py。
 """
 from __future__ import annotations
 
@@ -58,6 +59,34 @@ CREATE TABLE IF NOT EXISTS artist_names (
     artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_artist_names ON artist_names(artist_id);
+
+CREATE TABLE IF NOT EXISTS outfits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tag TEXT NOT NULL UNIQUE,                -- Danbooru 服装标签（普通标签，如 mischievous_straight_uniform_(blue_archive)）
+    name TEXT NOT NULL,
+    series_tag TEXT NOT NULL DEFAULT '',
+    post_count INTEGER NOT NULL DEFAULT 0,
+    other_names TEXT NOT NULL DEFAULT '[]',
+    wiki TEXT NOT NULL DEFAULT '',
+    appearance TEXT NOT NULL DEFAULT '[]',   -- 常见标签 [{tag, freq}]
+    members TEXT NOT NULL DEFAULT '[]',      -- 常穿的角色 [{tag, freq}]，freq 为 null 表示来自 wiki
+    notes TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'danbooru',
+    edited TEXT NOT NULL DEFAULT '[]',
+    fetched_at REAL, updated_at REAL
+);
+CREATE TABLE IF NOT EXISTS outfit_names (
+    norm TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    outfit_id INTEGER NOT NULL REFERENCES outfits(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_outfit_names ON outfit_names(outfit_id);
+-- 作品服装目录：某个作品在 Danbooru 上的服装标签列表（items = [{tag, post_count, removed?}]）
+CREATE TABLE IF NOT EXISTS outfit_series (
+    series_tag TEXT PRIMARY KEY,
+    items TEXT NOT NULL DEFAULT '[]',
+    fetched_at REAL
+);
 """
 
 
@@ -105,7 +134,7 @@ def _migrate(c: sqlite3.Connection) -> None:
         m = _VARIANT2.match(t)
         if m and not t.endswith("_(cosplay)") and f"{m.group(1)}_{m.group(2)}" in tags:
             c.execute("UPDATE characters SET parent_tag = ? WHERE tag = ?", (f"{m.group(1)}_{m.group(2)}", t))
-    for table in ("names", "artist_names"):
+    for table in ("names", "artist_names", "outfit_names"):
         keys = {r[0] for r in c.execute(f"SELECT norm FROM {table}")}
         for old, name in c.execute(f"SELECT norm, name FROM {table}").fetchall():
             new = norm(name)
@@ -126,9 +155,10 @@ with _conn() as _c:
 
 class Library:
     def __init__(self, table: str, names_table: str, fk: str, auto: tuple[str, ...], editable: tuple[str, ...],
-                 search_cols: tuple[str, ...], has_variants: bool = False):
+                 search_cols: tuple[str, ...], has_variants: bool = False, init: tuple[str, ...] = ()):
         self.table, self.names_table, self.fk = table, names_table, fk
         self.auto = auto            # 从 Danbooru 获取、未被手动改过时会更新的字段
+        self.init = init            # 只在新建时从 Danbooru 资料里取、以后不自动更新的字段
         self.editable = editable    # 页面上可编辑的字段
         self.search_cols = search_cols
         self.has_variants = has_variants   # 角色库：造型变体挂在本体下
@@ -136,7 +166,7 @@ class Library:
     # ── 内部 ──
     def _row(self, c: sqlite3.Connection, r: sqlite3.Row, family: bool = False) -> dict:
         d = dict(r)
-        for k in ("other_names", "appearance", "edited", "variants"):
+        for k in ("other_names", "appearance", "edited", "variants", "members"):
             if k in d:
                 d[k] = json.loads(d[k])
         d["names"] = [x["name"] for x in c.execute(
@@ -171,7 +201,7 @@ class Library:
 
     @staticmethod
     def _dump(k: str, v):
-        return json.dumps(v, ensure_ascii=False) if k in ("appearance", "other_names") else v
+        return json.dumps(v, ensure_ascii=False) if k in ("appearance", "other_names", "members") else v
 
     # ── 查询 ──
     def lookup(self, name: str) -> dict | None:
@@ -305,7 +335,8 @@ class Library:
             else:
                 cols = {"tag": tag, "name": display_name or tag.replace("_", " "), "post_count": prof["post_count"],
                         "other_names": self._dump("other_names", prof["other_names"]), "source": "danbooru",
-                        "fetched_at": now, "updated_at": now, **{k: self._dump(k, prof[k]) for k in self.auto}}
+                        "fetched_at": prof.get("fetched_at", now), "updated_at": now,
+                        **{k: self._dump(k, prof[k]) for k in (*self.init, *self.auto)}}
                 if parent_tag and self.has_variants:
                     cols["parent_tag"] = parent_tag
                 rid = c.execute(f"INSERT INTO {self.table} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
@@ -439,9 +470,57 @@ class Library:
             return c.execute(f"DELETE FROM {self.table} WHERE id = ?", (rid,)).rowcount > 0
 
 
+class OutfitLibrary(Library):
+    """服装库：另有按作品缓存的服装目录（outfit_series），见 web/outfits.py。"""
+
+    def of_series(self, series: str) -> list[dict]:
+        with _lock, _conn() as c:
+            return [self._row(c, r) for r in c.execute(
+                f"SELECT * FROM {self.table} WHERE series_tag = ? ORDER BY post_count DESC", (series,))]
+
+    def all_rows(self) -> list[dict]:
+        with _lock, _conn() as c:
+            return [self._row(c, r) for r in c.execute(f"SELECT * FROM {self.table}")]
+
+    def catalog(self, series: str) -> dict | None:
+        with _lock, _conn() as c:
+            r = c.execute("SELECT items, fetched_at FROM outfit_series WHERE series_tag = ?", (series,)).fetchone()
+            return {"items": json.loads(r["items"]), "fetched_at": r["fetched_at"]} if r else None
+
+    def generic_tags(self) -> set[str]:
+        """各作品目录里「去掉作品括号后撞了常见普通标签」的服装（china_dress_(love_live!)）。"""
+        with _lock, _conn() as c:
+            return {x["tag"] for (items,) in c.execute("SELECT items FROM outfit_series")
+                    for x in json.loads(items) if x.get("generic")}
+
+    def set_catalog(self, series: str, items: list[dict]) -> None:
+        """保存作品服装目录（保留用户删除过的标记）。"""
+        with _lock, _conn() as c:
+            r = c.execute("SELECT items FROM outfit_series WHERE series_tag = ?", (series,)).fetchone()
+            removed = {x["tag"] for x in json.loads(r["items"]) if x.get("removed")} if r else set()
+            items = [{**x, **({"removed": True} if x["tag"] in removed else {})} for x in items]
+            c.execute("INSERT OR REPLACE INTO outfit_series (series_tag, items, fetched_at) VALUES (?,?,?)",
+                      (series, json.dumps(items, ensure_ascii=False), time.time()))
+
+    def delete(self, rid: int) -> bool:
+        """单独删除的服装记在作品目录里，后台不再自动存回来（「添加」「导入」等明确操作仍可加回）。"""
+        with _lock, _conn() as c:
+            r = c.execute(f"SELECT tag, series_tag FROM {self.table} WHERE id = ?", (rid,)).fetchone()
+            s = c.execute("SELECT items FROM outfit_series WHERE series_tag = ?", (r["series_tag"],)).fetchone() if r else None
+            if s:
+                items = [{**x, "removed": True} if x["tag"] == r["tag"] else x for x in json.loads(s["items"])]
+                c.execute("UPDATE outfit_series SET items = ? WHERE series_tag = ?",
+                          (json.dumps(items, ensure_ascii=False), r["series_tag"]))
+            return c.execute(f"DELETE FROM {self.table} WHERE id = ?", (rid,)).rowcount > 0
+
+
 CHARACTERS = Library("characters", "names", "character_id", auto=("series_tag", "wiki", "appearance"),
                      editable=("name", "tag", "series_tag", "wiki", "appearance", "notes"),
                      search_cols=("tag", "series_tag"), has_variants=True)
 ARTISTS = Library("artists", "artist_names", "artist_id", auto=(),
                   editable=("name", "tag", "notes"), search_cols=("tag",))
-LIBS = {"characters": CHARACTERS, "artists": ARTISTS}
+# 服装的作品沿用目录 / 标签括号（与目录对得上），不随共现作品变
+OUTFITS = OutfitLibrary("outfits", "outfit_names", "outfit_id", auto=("wiki", "appearance", "members"),
+                        editable=("name", "tag", "series_tag", "wiki", "appearance", "notes"),
+                        search_cols=("tag", "series_tag"), init=("series_tag",))
+LIBS = {"characters": CHARACTERS, "artists": ARTISTS, "outfits": OUTFITS}

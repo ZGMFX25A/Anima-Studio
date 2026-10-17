@@ -169,7 +169,7 @@ WSL / Hyper-V / Docker 有时会临时占用 8188、8190、8200 端口，导致�
 
 | 位置 | 内容 |
 |---|---|
-| `frontend\data\` | 设置（**含 API Key**）、历史 / 收藏 / 人设 / 角色库数据库、缩略图、参考图 |
+| `frontend\data\` | 设置（**含 API Key**）、历史 / 收藏 / 人设 / 角色库（含画师库、服装库）数据库、缩略图、参考图 |
 | `frontend\logs\` | 运行日志；`llm_last_request.json` 记录最近一次发给 LLM 的完整内容 |
 | `output\` | 生成的图片 |
 

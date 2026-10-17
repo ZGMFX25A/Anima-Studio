@@ -7,7 +7,7 @@ import unicodedata
 
 from .. import config
 from ..llm import retry
-from . import danbooru, variant_cache
+from . import danbooru, outfits, variant_cache
 from .library import ARTISTS, CHARACTERS, _covers, _fz
 from .net import WebError
 
@@ -58,6 +58,8 @@ def _items(results: list[dict]) -> list[dict]:
     return [{"name": r["query"]["name"] or r["query"]["name_en"], "status": r["status"], "error": r["error"],
              "alternatives": r["alternatives"], "outfit": r["query"].get("outfit", ""),
              "variant_of": r["base"]["tag"] if r.get("base") else "", "options": len(r.get("options") or []),
+             "outfit_tag": r["outfit"]["tag"] if r.get("outfit") else "", "outfit_id": r["outfit"]["id"] if r.get("outfit") else None,
+             "outfit_options": len(r.get("outfit_options") or []),
              **(_summary(r["character"]) if r["character"] else {})}
             for r in results]
 
@@ -113,7 +115,8 @@ def _dedupe(results: list[dict]) -> list[dict]:
     seen, out = set(), []
     for e in results:
         ch = e["character"]
-        key = (ch["id"], e["query"].get("outfit", "") if e.get("options") else "") if ch else None
+        key = (ch["id"], e["outfit"]["id"] if e.get("outfit") else e["query"].get("outfit", "")
+               if e.get("options") or e.get("outfit_options") else "") if ch else None
         if key is None or key not in seen:
             out.append(e)
             if key is not None:
@@ -167,6 +170,17 @@ def _base_of(ch: dict) -> dict:
     return (CHARACTERS.get_by_tag(ch["parent_tag"]) if ch.get("parent_tag") else None) or ch
 
 
+def _outfit_texts(ch: dict, q: dict, description: str, scan: bool) -> list[str]:
+    """拿来认服装的文字：识别出的服装原文；没给时是描述里这个角色所在的那几句。
+
+    scan：同一角色出现了好几次时不看描述（那句里的服装多半是别的条目的）。
+    """
+    outfit = (q.get("outfit") or "").strip()
+    if outfit:
+        return [outfit]
+    return _clauses(description, [q["name"], q["name_en"], ch["name"], *_base_of(ch).get("names", [])]) if scan else []
+
+
 def _pick_variant(ch: dict, q: dict, description: str, scan: bool = True) -> tuple[dict, dict | None, list[dict]]:
     """返回 (用哪个条目, 它的本体（用的是变体时）, 没对上时附给 LLM 的可选变体)。
 
@@ -177,8 +191,7 @@ def _pick_variant(ch: dict, q: dict, description: str, scan: bool = True) -> tup
     if not variants:
         return ch, (base if base is not ch else None), []
     outfit = (q.get("outfit") or "").strip()
-    texts = [_n(outfit)] if outfit else [_n(c) for c in _clauses(description, [q["name"], q["name_en"], ch["name"],
-                                                                                *base.get("names", [])])] if scan else []
+    texts = [_n(t) for t in _outfit_texts(ch, q, description, scan)]
     best, best_len = None, 0
     for v in variants:
         for cue in _cues(v, base):
@@ -192,15 +205,40 @@ def _pick_variant(ch: dict, q: dict, description: str, scan: bool = True) -> tup
 
 
 def research_characters(found: list[dict], description: str = "") -> list[dict]:
+    """角色 → 角色库 / Danbooru；再按服装认造型变体，变体没对上时认作品服装（服装库，见 outfits.py）。
+
+    结果条目：character（用哪个条目）、base（用的是变体时的本体）、options（没对上时附给 LLM 的可选变体）、
+    outfit（名字对上的作品服装）、outfit_options（都没对上时附给 LLM 的可选作品服装）。
+    """
     results = _research(found, CHARACTERS, lambda q: danbooru.find_character(q["name"], q["name_en"], q["series"]),
                         danbooru.profile, series_check=True)
     bases = [_base_of(r["character"])["tag"] if r["character"] else None for r in results]
     for r, b in zip(results, bases):
+        r.update(outfit=None, outfit_options=[])
         if r["character"]:
-            variant_cache.schedule(r["character"]["tag"])      # 后台补齐本体与变体，不拖慢这次填写
-            ch, base, options = _pick_variant(r["character"], r["query"], description, scan=bases.count(b) == 1)
+            variant_cache.schedule(r["character"]["tag"])      # 后台补齐本体与变体、作品服装，不拖慢这次填写
+            scan = bases.count(b) == 1
+            ch, base, options = _pick_variant(r["character"], r["query"], description, scan)
             r.update(character=ch, base=base, options=options)
+            if base is None:          # 用的是本体（没有对上变体）：服装可能是几个角色共用的作品服装
+                row, opts = outfits.pick(ch, (r["query"].get("outfit") or "").strip(),
+                                         _outfit_texts(ch, r["query"], description, scan))
+                r.update(outfit=row, outfit_options=opts)
+                if row:
+                    r["options"] = []
     return _dedupe(results)
+
+
+def research_outfits(results: list[dict], description: str) -> list[dict]:
+    """服装资料块的条目：角色名字对上的作品服装（标出谁穿），以及描述里直接写了名字的服装库服装（只查本地）。"""
+    out: dict[int, dict] = {}
+    for r in results:
+        if r.get("outfit"):
+            e = out.setdefault(r["outfit"]["id"], {"outfit": r["outfit"], "wearers": []})
+            e["wearers"].append(r["query"]["name"] or r["character"]["name"])
+    for row in outfits.scan(description, set(out)):
+        out[row["id"]] = {"outfit": row, "wearers": []}
+    return list(out.values())
 
 
 def research_artists(found: list[dict]) -> list[dict]:
@@ -294,6 +332,32 @@ def _option(v: dict, base: dict) -> str:
     return f"{v['tag'].replace('_', ' ')}（{v['name']}）" + (f"：{', '.join(extra)}" if extra else "")
 
 
+def _outfit_option(o: dict, ch: dict) -> str:
+    """没对上服装时附给 LLM 的一套作品服装：标签（别名，这个角色穿过）：简介开头 / 角色本身没有的常见标签。"""
+    own = {a["tag"] for a in ch["appearance"]}
+    extra = [a["tag"].replace("_", " ") for a in o["appearance"] if a["tag"] not in own and (a.get("freq") or 0) >= 0.2][:8]
+    alias = next((n for n in [o["name"], *o["other_names"]] if n and not n.isascii()), "")
+    note = "，".join(x for x in (alias, "这个角色穿过" if outfits.wear(o, ch["tag"]) else "") if x)
+    desc = "／".join(x for x in (outfits.brief(o["wiki"], 160), ", ".join(extra)) if x)
+    return f"{o['tag'].replace('_', ' ')}" + (f"（{note}）" if note else "") + (f"：{desc}" if desc else "")
+
+
+def outfit_block(entries: list[dict]) -> str:
+    """服装资料块：名字对上的作品服装（谁穿、简介、常见标签、补充说明）。"""
+    items = []
+    for e in entries:
+        o = e["outfit"]
+        app = ", ".join(f"{a['tag'].replace('_', ' ')}（{round(a['freq'] * 100)}%）" if a.get("freq") is not None
+                        else a["tag"].replace("_", " ") for a in o["appearance"])
+        items.append(_drop_empty_lines(_render(_read("fill/user/outfit_item.md"), {
+            "name": o["name"], "tag": o["tag"].replace("_", " "), "series": o["series_tag"].replace("_", " "),
+            "wearers": "、".join(e["wearers"]), "other_names": "、".join(o["other_names"][:6]),
+            "wiki": " ".join(o["wiki"].split()), "appearance": app, "notes": " ".join(o["notes"].split())})))
+    if not items:
+        return ""
+    return _render(_read("fill/user/outfit_block.md"), {"outfits": "\n\n".join(items)})
+
+
 def character_block(results: list[dict], labels: dict) -> str:
     items = []
     for r in results:
@@ -308,7 +372,9 @@ def character_block(results: list[dict], labels: dict) -> str:
             "name": ch["name"], "tag": ch["tag"].replace("_", " "), "base_tag": base["tag"].replace("_", " ") if base else "",
             "series": ch["series_tag"].replace("_", " "), "outfit": r["query"].get("outfit", ""),
             "wiki": " ".join(ch["wiki"].split()), "appearance": app, "notes": notes,
-            "variants": "；".join(_option(v, ch) for v in r.get("options") or [])})
+            "variants": "；".join(_option(v, ch) for v in r.get("options") or []),
+            "outfit_tag": r["outfit"]["tag"].replace("_", " ") if r.get("outfit") else "",
+            "outfit_options": "；".join(_outfit_option(o, ch) for o in r.get("outfit_options") or [])})
         items.append(_drop_empty_lines(text))
     if not items:
         return ""
@@ -324,10 +390,14 @@ def tag_block(tags: dict | None) -> str:
 
 
 def summary(results: list[dict], artists: list[dict], tags: dict | None, tag_error: str | None,
-            want_web: bool, personas: list[dict] | None = None) -> dict:
+            want_web: bool, personas: list[dict] | None = None, outfit_entries: list[dict] | None = None) -> dict:
     return {
         "personas": personas or [],
         "characters": _items(results) if want_web else None,
+        "outfits": [{"id": e["outfit"]["id"], "tag": e["outfit"]["tag"], "name": e["outfit"]["name"],
+                     "series_tag": e["outfit"]["series_tag"], "post_count": e["outfit"]["post_count"],
+                     "wearers": e["wearers"], "edited": bool(e["outfit"]["edited"])}
+                    for e in outfit_entries or []] if want_web else None,
         "artists": _items(artists) if want_web else None,
         "tags": None if tags is None and tag_error is None else {
             "count": len(tags["results"]) if tags else 0, "cached": bool(tags and tags.get("cached")),

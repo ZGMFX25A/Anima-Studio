@@ -6,6 +6,7 @@
   明确用到的变体（人设导入勾选、角色库点「获取」、模糊搜索导入、AI 填写直接命中）不受这两条限制，照常存。
 
 只在后台线程里联网，不拖慢 AI 填写 / 导入；全部已缓存时只查数据库。同一个角色同时只排一次队。
+同一趟也补齐角色所在作品的服装目录与服装库（见 outfits.py）。
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import threading
 import time
 from collections import deque
 
-from . import danbooru
+from . import danbooru, outfits
 from .library import CHARACTERS
 from .net import WebError
 
@@ -128,3 +129,8 @@ def _ensure(tag: str, extra: list[str]) -> None:
         save_variant(parent, v["tag"], v["post_count"])
     if todo:
         log.info("变体缓存：%s 的 %d 个变体已存入角色库", base, len(todo))
+    # 同一趟顺便补齐这个作品的服装目录（作品服装不挂在角色下，几个角色共用；已取过时只查数据库）
+    try:
+        outfits.ensure_series(outfits.series_key(parent), profiles=True)
+    except WebError as e:
+        log.info("服装库：%s 的作品服装联网失败（%s），下次用到时再试", base, e)

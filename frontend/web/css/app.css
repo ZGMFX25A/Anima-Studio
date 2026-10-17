@@ -547,6 +547,10 @@ a:hover { text-decoration: underline; }
 .fz-box { display: flex; flex-direction: column; gap: 8px; }
 .fz-box .db-list { max-height: 320px; }
 .db-row.busy { opacity: .5; pointer-events: none; }
+.db-row.with-desc { flex-wrap: wrap; row-gap: 3px; }
+.db-desc { flex-basis: 100%; line-height: 1.45; }
+a.chip.link { text-decoration: none; cursor: pointer; }
+a.chip.link:hover { border-color: var(--accent); color: var(--accent); }
 .vlist { display: flex; flex-direction: column; padding: 4px 10px 6px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--panel-2); font-size: 13px; }
 .vlist-head { display: flex; align-items: center; gap: 6px; padding: 4px 0 6px; border-bottom: 1px solid var(--border); }
