@@ -6,7 +6,7 @@ import re
 
 from .. import config
 from ..llm import retry
-from . import danbooru
+from . import danbooru, variant_cache
 from .library import ARTISTS, CHARACTERS
 from .net import WebError
 
@@ -98,8 +98,12 @@ def _research(found: list[dict], lib, find, profile) -> list[dict]:
 
 
 def research_characters(found: list[dict]) -> list[dict]:
-    return _research(found, CHARACTERS, lambda q: danbooru.find_character(q["name"], q["name_en"], q["series"]),
-                     danbooru.profile)
+    results = _research(found, CHARACTERS, lambda q: danbooru.find_character(q["name"], q["name_en"], q["series"]),
+                        danbooru.profile)
+    for r in results:      # 后台补齐本体与变体，不拖慢这次填写
+        if r["character"]:
+            variant_cache.schedule(r["character"]["tag"])
+    return results
 
 
 def research_artists(found: list[dict]) -> list[dict]:

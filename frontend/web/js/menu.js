@@ -62,6 +62,7 @@ const VENDOR = { nvidia: 'NVIDIA', amd: 'AMD', intel: 'Intel', cpu: 'CPU' };
 
 let engineKey = '';
 let argsDraft = null;   // 启动参数输入框里尚未保存的内容，重绘时保留
+let argsOpen = false;   // 启动参数卡片默认折叠（一般不用改），放在引擎页最下面
 
 // 结构（状态、按钮、错误）变化时才重建；其余只更新数值，避免每 5 秒重绘吃掉点击。
 function renderEngine() {
@@ -74,11 +75,11 @@ function renderEngine() {
   const c = status.comfyui, p = status.painter;
   const key = JSON.stringify([c.state, c.pid, c.external, c.error, c.blocked, c.log_tail, !!c.stats, !!c.stats?.devices?.length,
     c.gpu?.level, c.gpu?.reason, c.gpu?.message, c.args?.comfy_args, c.args?.pending_restart,
-    p.state, p.pid, p.external, p.error, p.log_tail, busy.comfyui, busy.painter, busy.args]);
+    p.state, p.pid, p.external, p.error, p.log_tail, busy.comfyui, busy.painter, busy.args, argsOpen]);
   if (key !== engineKey) {
     engineKey = key;
     if (argsDraft === null && c.args) argsDraft = c.args.comfy_args;
-    fill(root, engineHead(), comfyCard(c), argsCard(c), painterCard(p));
+    fill(root, engineHead(), comfyCard(c), painterCard(p), argsCard(c));
   }
   for (const [k, v] of Object.entries(engineValues())) {
     const node = root.querySelector(`[data-k="${k}"]`);
@@ -182,19 +183,28 @@ function argsCard(c) {
     finally { busy.args = false; emit('refresh-status'); }
   };
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
-  return el('div', { class: 'svc' },
-    el('div', { class: 'svc-head' }, el('h3', {}, 'ComfyUI 启动参数'), dirty,
-      el('div', { class: 'svc-btns' },
-        el('button', { class: `btn small accent${busy.args ? ' busy' : ''}`, disabled: busy.args, onclick: save }, '保存'))),
-    el('div', { class: 'seed-row' }, input),
-    el('div', { class: 'hint' },
+  const toggle = () => { argsOpen = !argsOpen; renderEngine(); };
+  const pending = a.pending_restart ? el('div', { class: 'hint warn' },
+    a.external ? 'ComfyUI 不是由本程序启动的，无法确认它使用的参数；重启后按这里的设置启动。'
+      : '启动参数改过了，ComfyUI 还在用旧的，重启后生效。') : null;
+  // 折叠时只留一行：当前设置 + 一句说明；有没生效的修改时照样提示
+  return el('div', { class: `svc args-card${argsOpen ? ' open' : ''}` },
+    el('div', { class: 'svc-head args-head', onclick: toggle, title: argsOpen ? '收起' : '展开设置' },
+      el('span', { class: 'args-caret' }, '▸'), el('h3', {}, 'ComfyUI 启动参数'),
+      el('span', { class: 'muted small mono' }, a.comfy_args ? a.comfy_args : '未加参数'),
+      argsOpen ? dirty : null,
+      el('div', { class: 'svc-btns' }, argsOpen
+        ? el('button', { class: `btn small accent${busy.args ? ' busy' : ''}`, disabled: busy.args,
+          onclick: (e) => { e.stopPropagation(); save(); } }, '保存')
+        : el('span', { class: 'muted small' }, '展开'))),
+    argsOpen ? null : el('div', { class: 'muted small' }, '一般不用改。AMD 显卡显存不足时可以在这里加参数，点开查看说明。'),
+    argsOpen ? el('div', { class: 'seed-row' }, input) : null,
+    argsOpen ? el('div', { class: 'hint' },
       '追加在 ComfyUI 命令行后面，重启 ComfyUI 后生效（单独运行 start_comfyui.bat 时不使用）。一般留空即可。常用：',
       el('br'), '· --enable-dynamic-vram：AMD 显卡出现显存不足时可以试试（NVIDIA 版已默认开启）',
       el('br'), '· --reserve-vram 1：给系统和其它程序多留 1GB 显存',
-      el('br'), '--listen 与 --port 由本程序固定设置，不能填写。'),
-    a.pending_restart ? el('div', { class: 'hint warn' },
-      a.external ? 'ComfyUI 不是由本程序启动的，无法确认它使用的参数；重启后按上面的设置启动。'
-        : 'ComfyUI 仍在使用旧的启动参数，重启后生效。') : null);
+      el('br'), '--listen 与 --port 由本程序固定设置，不能填写。') : null,
+    pending);
 }
 
 function painterCard(p) {

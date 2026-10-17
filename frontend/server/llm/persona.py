@@ -10,7 +10,7 @@ import time
 
 from .. import config, gallery, personas
 from ..personas import PersonaError, clean_tags, split_list, tag_set, tag_text
-from ..web import danbooru, research, tagsearch
+from ..web import danbooru, research, tagsearch, variant_cache
 from ..web.library import CHARACTERS
 from ..web.net import WebError
 from . import client, retry, store
@@ -93,14 +93,18 @@ def _normalize(raw: dict, allowed_tags: set[str] | None) -> dict:
 
 # ───────────────────────────── Danbooru 导入 ─────────────────────────────
 
-def search(q: str) -> list[dict]:
-    """角色候选：Danbooru 补全（中日文名、别名、旧名都能命中）。"""
+def search(q: str, series: str = "", fuzzy: bool = False) -> list[dict]:
+    """角色候选。默认：Danbooru 补全（标签、中日文名、别名、旧名都能命中）；
+    fuzzy：模糊搜索（名字可只写一部分 + 作品，见 danbooru.search_characters）。"""
     q = (q or "").strip().lstrip("@")
     if not q:
         return []
-    cands = danbooru.autocomplete(q)
-    if not cands and " " in q:
-        cands = danbooru.autocomplete(q.replace(" ", "_"))
+    if fuzzy:
+        cands = danbooru.search_characters(q, series)["items"]
+    else:
+        cands = danbooru.autocomplete(q)
+        if not cands and " " in q:
+            cands = danbooru.autocomplete(q.replace(" ", "_"))
     out = []
     for c in cands:
         lib = CHARACTERS.get_by_tag(c["tag"])
@@ -109,12 +113,23 @@ def search(q: str) -> list[dict]:
     return out
 
 
-def variants(tag: str) -> list[dict]:
-    return [{**v, "text": tag_text(v["tag"])} for v in danbooru.variants(tag)]
+def variants(tag: str, refresh: bool = False) -> dict:
+    """造型变体列表：本体在角色库且缓存过列表时直接用缓存（refresh 时重新联网）；in_library = 该变体已缓存。"""
+    lib = CHARACTERS.get_by_tag(tag)
+    if lib and lib["variants_at"] and not refresh:
+        lst, at = lib["variants"], lib["variants_at"]
+    elif lib and not lib["parent_tag"]:
+        lst, at = variant_cache.refresh_list(lib), time.time()
+    else:
+        lst, at = danbooru.variants(tag), None
+    have = CHARACTERS.tags_present(v["tag"] for v in lst)
+    return {"items": [{"tag": v["tag"], "post_count": v["post_count"], "text": tag_text(v["tag"]),
+                       "in_library": v["tag"] in have} for v in lst], "cached_at": at}
 
 
 def _source(tag: str, display: str) -> dict:
-    """角色资料：角色库有缓存时只联网取一次共现标签（失败则用缓存的外貌标签）；没有则完整检索并存入角色库。"""
+    """角色资料：角色库有缓存时只联网取一次共现标签（失败则用缓存的外貌标签）；没有则完整检索并存入角色库。
+    本体与其它变体随后在后台补齐（见 web/variant_cache.py）。"""
     lib = CHARACTERS.get_by_tag(tag)
     if lib:
         try:
@@ -130,15 +145,24 @@ def _source(tag: str, display: str) -> dict:
     return {**prof, "notes": "", "library": "saved"}
 
 
-def _qualifier(variant: str, base: str) -> str:
-    """aris_(maid)_(blue_archive) → maid。"""
-    m = re.match(r"^(.+?)_(\([^()]+\))$", base)
-    stem = m.group(1) if m else base
-    rest = variant[len(stem):] if variant.startswith(stem) else variant
-    qs = re.findall(r"\(([^()]+)\)", rest)
-    if m and len(qs) > 1:
-        qs = qs[:-1]
-    return tag_text(" ".join(qs)) or tag_text(variant)
+def _variant_source(v: str, parent: dict | None, post_count) -> tuple[dict, bool]:
+    """勾选的变体，与本体同一规则：角色库有就只联网取一次共现标签（失败用缓存的外貌标签）；
+    没有就完整取一遍并存入角色库（明确用到，不受图片数门槛限制）。返回 (资料, 是否新存入)。WebError 由调用方处理。"""
+    lv = CHARACTERS.get_by_tag(v)
+    if lv:
+        try:
+            general = danbooru.general_tags(v, 60)
+        except WebError:
+            general = [(a["tag"], a["freq"] or 0.0) for a in lv["appearance"]]
+        return {"tag": v, "general": general, "wiki": lv["wiki"], "notes": lv["notes"],
+                "post_count": lv["post_count"]}, False
+    if parent:
+        prof, _ = variant_cache.save_variant(parent, v, post_count)
+        saved = True
+    else:    # 本体没能存进角色库（理论上不会）：只取资料不保存
+        prof, saved = danbooru.profile(v, post_count), False
+    return {"tag": v, "general": prof["general"], "wiki": prof["wiki"], "notes": "",
+            "post_count": prof["post_count"]}, saved
 
 
 def import_character(req: dict) -> dict:
@@ -161,14 +185,18 @@ def _import_character(req: dict, rid: str) -> dict:
     if len(picked) > MAX_VARIANTS:
         warnings.append(f"造型变体最多 {MAX_VARIANTS} 个，只用了前 {MAX_VARIANTS} 个")
         picked = picked[:MAX_VARIANTS]
-    var_data = []
+    counts = {x["tag"]: x["post_count"] for x in (req.get("variant_counts") or []) if isinstance(x, dict) and x.get("tag")}
+    parent = CHARACTERS.get_by_tag(tag)
+    var_data, var_saved = [], 0
     for v in picked:
         try:
-            var_data.append({"tag": v, "general": danbooru.general_tags(v, 60)})
+            d, saved = _variant_source(v, parent, counts.get(v))
+            var_saved += saved
         except WebError as e:
             warnings.append(f"变体 {tag_text(v)} 的资料获取失败：{e}")
-            var_data.append({"tag": v, "general": []})
-    counts = {x["tag"]: x["post_count"] for x in (req.get("variant_counts") or []) if isinstance(x, dict) and x.get("tag")}
+            d = {"tag": v, "general": [], "wiki": "", "notes": "", "post_count": counts.get(v)}
+        var_data.append(d)
+    variant_cache.schedule(tag)     # 没勾选的变体（图片数够的）在后台缓存
 
     labels = _labels()
     log: dict = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "mode": "persona_import", "tag": tag,
@@ -176,7 +204,8 @@ def _import_character(req: dict, rid: str) -> dict:
     if split:
         p, m, level = _model(req)
         var_text = "\n\n".join(_render(_read("split_variant_item.md"), {
-            "tag": tag_text(v["tag"]), "post_count": counts.get(v["tag"], "") or "—",
+            "tag": tag_text(v["tag"]), "post_count": v["post_count"] or "—",
+            "wiki": " ".join((v["wiki"] or "").split()), "notes": " ".join((v["notes"] or "").split()),
             "tags": _fmt(v["general"]) or labels["empty"]}) for v in var_data)
         user = _drop_empty_lines(_render(_read("split_user.md"), {
             "tag": tag_text(tag), "series": tag_text(src["series_tag"]), "post_count": src["post_count"] or "",
@@ -198,7 +227,7 @@ def _import_character(req: dict, rid: str) -> dict:
         if v["tag"] in have:
             continue
         tags = clean_tags([tag_text(t) for t, f in v["general"] if f >= FALLBACK_FREQ], exclude=base_set)
-        out["outfits"].append({"name": _qualifier(v["tag"], tag), "tags": tags, "desc": "",
+        out["outfits"].append({"name": danbooru.qualifier(v["tag"], tag), "tags": tags, "desc": "",
                                "character_tag": tag_text(v["tag"]), "default": False})
         if split:
             warnings.append(f"AI 没有给变体 {tag_text(v['tag'])} 单独列造型，已按共现标签自动补上")
@@ -222,7 +251,7 @@ def _import_character(req: dict, rid: str) -> dict:
         log.update(result={**draft, "unassigned": out["unassigned"]}, warnings=warnings)
         _write_log(log)
     return {"draft": draft, "unassigned": out["unassigned"], "warnings": warnings, "post_count": src["post_count"],
-            "library": src["library"], "elapsed": time.time() - t0}
+            "library": src["library"], "variants_saved": var_saved, "elapsed": time.time() - t0}
 
 
 # ───────────────────────────── AI 整理 ─────────────────────────────

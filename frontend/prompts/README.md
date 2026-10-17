@@ -96,7 +96,7 @@ AI 填写时，上传的图片（灵感图、已开启的人物参考图 / 动�
 |---|---|
 | `split_system.md` | 导入已有角色时的系统提示词：把 Danbooru 共现标签拆成 中文名 / 主体 / 基础标签 / 外观描述 / 造型 / 未归类 |
 | `split_user.md` | 用户消息：`{{tag}}` `{{series}}` `{{post_count}}` `{{other_names}}` `{{wiki}}` `{{notes}}`（角色库补充说明）`{{tags}}`（共现标签与比例）`{{variants}}` `{{description}}`（AI 助手的补充描述）；值为空的行自动去掉 |
-| `split_variant_item.md` | 每个勾选的造型变体：`{{tag}}` `{{post_count}}` `{{tags}}` |
+| `split_variant_item.md` | 每个勾选的造型变体：`{{tag}}` `{{post_count}}` `{{wiki}}`（变体的 Danbooru 简介）`{{notes}}`（角色库里该变体的补充说明）`{{tags}}`；值为空的行自动去掉 |
 | `refine_system.md` | 「AI 整理」的系统提示词：按补充描述补全 / 修正，没提到的保持原样 |
 | `refine_user.md` | 用户消息：`{{persona}}`（当前人设 JSON）`{{description}}`；前面依次是带标注的参考图、标签参考块（复用 `fill/user/tag_block.md`） |
 | `schema.json` | 两者共用的输出结构：`display_name` `count` `base_tags` `appearance_desc` `outfits[{name, tags, desc, character_tag, default}]` `unassigned` `refusal` |

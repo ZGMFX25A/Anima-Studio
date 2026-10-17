@@ -1,6 +1,6 @@
 // 人设的 AI 功能：Danbooru 检索导入（AI 拆分成 基础外观 / 造型）、AI 整理（按补充描述补全 / 修正）、撤销。
 import { api, errorText } from './api.js';
-import { el, fill, toast, toastError, modal, dropzone } from './ui.js';
+import { el, fill, toast, toastError, modal, dropzone, fmtTime } from './ui.js';
 import { app, emit } from './store.js';
 
 const LLM_KEY = 'anima.persona.llm';
@@ -151,6 +151,7 @@ async function refine(ctx, btn) {
 export function openDanbooru(ctx) {
   const p = ctx.p;
   const input = el('input', { type: 'text', value: p.character_tag || p.name || '', placeholder: '角色名（中文 / 日文 / 英文）或 Danbooru 标签' });
+  const seriesIn = el('input', { type: 'text', value: p.series || '', placeholder: '作品（可选），如 碧蓝档案 / blue archive', style: { display: 'none' } });
   const searchBtn = el('button', { class: 'btn' }, '搜索');
   const results = el('div', { class: 'db-list' });
   const varBox = el('div', { class: 'db-vars' });
@@ -158,13 +159,22 @@ export function openDanbooru(ctx) {
   const sel = llmSelect();
   const split = el('input', { type: 'checkbox', checked: true });
   const importBtn = el('button', { class: 'btn accent', disabled: true }, '导入');
-  const st = { picked: null, vars: [], checked: new Set(), ctl: null };
+  const st = { picked: null, vars: [], varsAt: null, checked: new Set(), ctl: null, fuzzy: false };
+  // 两种查法：按标签 / 名字直接补全（原来的方式）；模糊搜索（名字可只写一部分 + 作品）
+  const modeBtns = [['标签 / 名字', false], ['模糊搜索', true]].map(([label, fz]) =>
+    el('button', { class: fz === st.fuzzy ? 'on' : '', onclick: () => setMode(fz) }, label));
+  const setMode = (fz) => {
+    st.fuzzy = fz;
+    modeBtns.forEach((b, i) => b.classList.toggle('on', (i === 1) === fz));
+    seriesIn.style.display = fz ? '' : 'none';
+    input.placeholder = fz ? '名字，可以只写一部分，如 晶 / 爱丽丝 / akira' : '角色名（中文 / 日文 / 英文）或 Danbooru 标签';
+  };
 
   const m = modal({
     title: '从 Danbooru 导入已有角色', wide: true, actions: [],
     onClose: () => st.ctl?.abort(),
     body: el('div', { class: 'db-modal' },
-      el('div', { class: 'db-search' }, input, searchBtn),
+      el('div', { class: 'db-search' }, el('div', { class: 'seg' }, modeBtns), input, seriesIn, searchBtn),
       results, varBox,
       el('div', { class: 'db-foot' },
         el('label', { class: 'pv-field grow' }, el('span', {}, 'LLM'), sel),
@@ -178,18 +188,50 @@ export function openDanbooru(ctx) {
   async function search() {
     const q = input.value.trim();
     if (!q) return;
+    const fuzzy = st.fuzzy, series = fuzzy ? seriesIn.value.trim() : '';
     st.picked = null;
     importBtn.disabled = true;
     fill(varBox);
-    fill(results, el('div', { class: 'muted small' }, '检索中…'));
+    fill(results, el('div', { class: 'muted small' }, fuzzy ? '搜索中…（约 3–6 秒）' : '检索中…'));
     try {
-      const list = await api.post('/api/personas/danbooru/search', { q });
-      fill(results, list.length ? list.map(c => el('button', { class: 'db-row', onclick: (e) => pick(c, e.currentTarget) },
-        el('b', { class: 'mono' }, c.text), c.matched && c.matched !== c.tag ? el('span', { class: 'muted small' }, `← ${c.matched}`) : null,
-        el('span', { class: 'grow' }), c.in_library ? el('span', { class: 'badge ok' }, '角色库已有') : null,
-        el('span', { class: 'muted small mono' }, `${c.post_count} 张`)))
-        : el('div', { class: 'muted small' }, `Danbooru 上没有找到「${q}」，试试英文名或罗马音`));
+      const list = await api.post('/api/personas/danbooru/search', { q, series, fuzzy });
+      const other = series && list.some(c => c.series_match) ? list.filter(c => c.series_match === false).length : 0;
+      fill(results, list.length ? [
+        ...list.map(c => el('button', { class: `db-row${c.series_match === false && other ? ' dim' : ''}`, onclick: (e) => pick(c, e.currentTarget) },
+          el('b', { class: 'mono' }, c.text), c.matched && c.matched !== c.tag && c.matched !== c.text ? el('span', { class: 'muted small' }, `← ${c.matched}`) : null,
+          el('span', { class: 'grow' }),
+          c.series_match === false && other ? el('span', { class: 'muted small' }, '其它作品') : null,
+          c.in_library ? el('span', { class: 'badge ok' }, '已在角色库') : null,
+          el('span', { class: 'muted small mono' }, `${c.post_count} 张`))),
+        series && !list.some(c => c.series_match !== null) ? el('div', { class: 'muted small' }, `没认出作品「${series}」，上面的结果没有按作品筛选；换个写法试试（英文名、日文名）`) : null]
+        : el('div', { class: 'muted small' }, `Danbooru 上没有找到「${q}」${fuzzy ? '，少写几个字或换个写法试试' : '，试试英文名、罗马音，或切到「模糊搜索」'}`));
     } catch (e) { fill(results); toastError(e); }
+  }
+
+  async function loadVariants(c, refresh = false) {
+    fill(varBox, el('div', { class: 'muted small' }, refresh ? '重新获取造型变体…' : '查找造型变体…'));
+    let r = { items: [], cached_at: null };
+    try { r = await api.post('/api/personas/danbooru/variants', { tag: c.tag, refresh }); } catch (e) { toastError(e); }
+    if (st.picked !== c) return;
+    st.vars = r.items;
+    st.checked = new Set([...st.checked].filter(t => st.vars.some(v => v.tag === t)));
+    const head = el('div', { class: 'db-vars-head' },
+      el('b', {}, '造型变体'),
+      el('span', { class: 'muted' }, '勾选的各成一套造型，变体标签写进它的「专属角色标签」，最多 6 个'),
+      el('span', { class: 'grow' }),
+      r.cached_at ? el('span', { class: 'muted' }, `列表来自角色库（${fmtTime(r.cached_at)}）`) : null,
+      r.cached_at ? el('button', { class: 'btn small ghost', onclick: () => loadVariants(c, true) }, '刷新') : null);
+    fill(varBox, st.vars.length ? [head,
+      el('div', { class: 'db-varlist' }, st.vars.map(v => el('label', { class: 'checkline' },
+        el('input', { type: 'checkbox', checked: st.checked.has(v.tag), onchange: (e) => {
+          if (e.target.checked) {
+            if (st.checked.size >= 6) { e.target.checked = false; return toast('最多勾选 6 个', 'warn'); }
+            st.checked.add(v.tag);
+          } else st.checked.delete(v.tag);
+        } }),
+        el('span', { class: 'mono' }, v.text), el('span', { class: 'muted small' }, `${v.post_count} 张`),
+        v.in_library ? el('span', { class: 'badge ok small-badge' }, '已缓存') : null)))]
+      : [head, el('div', { class: 'muted small' }, '这个角色在 Danbooru 上没有造型变体')]);
   }
 
   async function pick(c, row) {
@@ -198,22 +240,7 @@ export function openDanbooru(ctx) {
     st.checked = new Set();
     for (const r of results.children) r.classList.toggle('on', r === row);
     importBtn.disabled = false;
-    fill(varBox, el('div', { class: 'muted small' }, '查找造型变体…'));
-    try {
-      st.vars = await api.post('/api/personas/danbooru/variants', { tag: c.tag });
-    } catch (e) { toastError(e); }
-    if (st.picked !== c) return;
-    fill(varBox, st.vars.length ? [
-      el('div', { class: 'small' }, '造型变体', el('span', { class: 'muted' }, '（Danbooru 给这个角色的服装 / 形态单独建的标签；勾选的各成一套造型，并把变体标签写进该造型的「专属角色标签」，最多 6 个）')),
-      el('div', { class: 'db-varlist' }, st.vars.map(v => el('label', { class: 'checkline' },
-        el('input', { type: 'checkbox', onchange: (e) => {
-          if (e.target.checked) {
-            if (st.checked.size >= 6) { e.target.checked = false; return toast('最多勾选 6 个', 'warn'); }
-            st.checked.add(v.tag);
-          } else st.checked.delete(v.tag);
-        } }),
-        el('span', { class: 'mono' }, v.text), el('span', { class: 'muted small' }, `${v.post_count} 张`))))]
-      : el('div', { class: 'muted small' }, '这个角色在 Danbooru 上没有造型变体标签'));
+    await loadVariants(c);
   }
 
   async function doImport() {
@@ -246,6 +273,7 @@ export function openDanbooru(ctx) {
 
   searchBtn.addEventListener('click', search);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
+  seriesIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
   importBtn.addEventListener('click', doImport);
   setTimeout(() => input.focus(), 30);
   if (input.value.trim()) search();
@@ -297,6 +325,7 @@ async function applyImport(ctx, res) {
   ctx.rerender();
   for (const w of res.warnings || []) toast(w, 'warn', 6000);
   emit('llm-models-changed');       // 思考档位可能被自动改掉
-  toast(`已导入 ${d.character_tag}（${res.library === 'cached' ? '角色库已有资料' : '已存入角色库'}），检查后点「保存」`, 'ok', 5000);
+  const saved = res.variants_saved ? `，${res.variants_saved} 个勾选的变体也已存入` : '';
+  toast(`已导入 ${d.character_tag}（${res.library === 'cached' ? '角色库已有资料' : '已存入角色库'}${saved}），检查后点「保存」`, 'ok', 5000);
 }
 

@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Anima Studio</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237c8cff'/%3E%3Cpath d='M9 23l7-14 7 14M12 18h8' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script>
+// 外观（跟随系统 / 浅色 / 深色，见 js/main.js）在样式加载前先设好，避免打开时闪一下
+(function () {
+  var m = 'system';
+  try { m = localStorage.getItem('anima.theme') || 'system'; } catch (e) { /* 忽略 */ }
+  var dark = m === 'dark' || (m === 'system' && !window.matchMedia('(prefers-color-scheme: light)').matches);
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+})();
+</script>
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/persona.css">
 </head>
@@ -21,6 +30,7 @@
   <button class="status-pill" id="status-pill" title="查看引擎状态">
     <span class="dot" id="status-dot"></span><span id="status-text">连接中…</span>
   </button>
+  <button class="theme-btn" id="theme-btn" title="外观"><span class="theme-icon">◐</span><span class="theme-label">跟随系统</span></button>
 </header>
 
 <main>
