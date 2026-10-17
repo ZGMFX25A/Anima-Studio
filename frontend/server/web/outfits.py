@@ -84,7 +84,7 @@ def _hit(cue: str, text: str, partial: bool = False) -> bool:
 
     AI 填写不认「只写一部分」：cheerleader 会撞上 millennium cheerleader outfit，交给 LLM 按可选项判断。
     """
-    return cue in text or (partial and len(text) >= (5 if text.isascii() else 3) and text in cue)
+    return cue in text or (partial and len(text) >= (3 if text.isascii() else 2) and text in cue)
 
 
 def wear(row: dict, tag: str) -> float:
@@ -281,15 +281,32 @@ def scan(description: str, skip: set[int]) -> list[dict]:
 # ───────────── 服装库「模糊搜索」 ─────────────
 
 def fuzzy_search(name: str, series: str) -> dict:
-    """名字（可空，可以只写一部分）+ 作品 → 这个作品的服装（名字对上的在前，其余照列，供按意思挑），再接 Danbooru 补全的结果。
+    """服装库的模糊搜索：服装名（中日英文，可以只写一部分）和作品都可选，至少填一个。
 
-    「偶像服」这类说法对不上任何名字：列出该作品的全部服装（带简介），由用户挑。
+    - 服装库里名字对上的（不联网，排最前）；
+    - 填了作品：这个作品的服装目录（名字对上的在前，其余照列，供按意思挑——「偶像服」对不上任何名字时列出全部）；
+    - 填了名字：Danbooru 按名字查（补全、标签名包含名字、wiki 别名包含名字），不要求作品。
+    结果 series_match：标签括号里的作品对得上为 True、括号是别的作品为 False、标签没写作品为 None（如 hatsuboshi_gakuen_school_uniform）。
     """
     keys = danbooru.series_keys(series) if series.strip() else []
     s = keys[-1] if keys else ""
-    k = _text_key(name)
+    k = _key(name)
     items: dict[str, dict] = {}
     errors = []
+
+    def smatch(tag: str, row_series: str = "") -> bool | None:
+        if not keys:
+            return None
+        if row_series:
+            return any(danbooru._same_series(row_series, x) for x in keys)
+        return True if danbooru._series_hit(tag, keys) else (False if re.search(r"_\([^()]+\)$", tag) else None)
+
+    if k:
+        for row in OUTFITS.all_rows():
+            if any(_hit(c, k, partial=True) for c in cues(row)):
+                items[row["tag"]] = {"tag": row["tag"], "post_count": row["post_count"], "matched": row["name"],
+                                     "exact": True, "local": True, "series_match": smatch(row["tag"], row["series_tag"]),
+                                     "desc": brief(row["wiki"], 140)}
     if s:
         try:
             ensure_series(s)       # 只列出，选中的那套由 /import 存入
@@ -298,22 +315,24 @@ def fuzzy_search(name: str, series: str) -> dict:
         lib = {r["tag"]: r for r in OUTFITS.of_series(s)}
         cat = (OUTFITS.catalog(s) or {}).get("items") or []
         for x in [*cat, *(r for t, r in lib.items() if t not in {c["tag"] for c in cat})]:
+            if x["tag"] in items:
+                continue
             row = lib.get(x["tag"]) or {**x, "name": "", "names": [], "series_tag": s}
-            hit = bool(k) and any(_hit(c, k, partial=True) for c in cues(row))
-            items[x["tag"]] = {"tag": x["tag"], "post_count": x.get("post_count") or 0, "matched": "", "exact": hit,
+            items[x["tag"]] = {"tag": x["tag"], "post_count": x.get("post_count") or 0, "matched": "",
+                               "exact": bool(k) and any(_hit(c, k, partial=True) for c in cues(row)),
                                "series_match": True, "desc": brief(row.get("wiki", ""), 140)}
     if k:
         try:
-            for c in danbooru.find_outfit(name):
+            for c in danbooru.search_outfits(name):
                 if c["tag"] not in items:
-                    items[c["tag"]] = {"tag": c["tag"], "post_count": c["post_count"], "matched": c["matched"],
-                                       "exact": True, "series_match": danbooru._series_hit(c["tag"], keys) if keys else None,
-                                       "desc": ""}
+                    items[c["tag"]] = {"tag": c["tag"], "post_count": c["post_count"], "matched": c.get("matched") or "",
+                                       "exact": True, "series_match": smatch(c["tag"]), "desc": ""}
         except WebError as e:
             errors.append(str(e))
     if errors and not items:
         raise WebError(errors[0])
-    out = sorted(items.values(), key=lambda c: (not c["exact"], c["series_match"] is False, -c["post_count"]))
+    out = sorted(items.values(), key=lambda c: (not c["exact"], c["series_match"] is False, c["series_match"] is not True,
+                                                not c.get("local"), -c["post_count"]))
     have = OUTFITS.tags_present(c["tag"] for c in out)
     return {"items": [{**c, "in_library": c["tag"] in have} for c in out[:30]], "series_tags": keys,
             "offline": errors[0] if errors else None}
