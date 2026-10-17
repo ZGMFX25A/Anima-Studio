@@ -8,9 +8,10 @@
         "properties": {
           "name": {"type": "string"},
           "name_en": {"type": "string"},
-          "series": {"type": "string"}
+          "series": {"type": "string"},
+          "outfit": {"type": "string"}
         },
-        "required": ["name", "name_en", "series"],
+        "required": ["name", "name_en", "series", "outfit"],
         "additionalProperties": false
       }
     },

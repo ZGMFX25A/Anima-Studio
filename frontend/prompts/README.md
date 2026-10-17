@@ -35,8 +35,8 @@ prompts/
 | 8 | `ref_pose.md` | 开启动作参考，识图成功 | 动作词与识图结果的姿势一致、必须写朝向（`{{pose_input_type}}`） |
 | 8 | `ref_pose_noimage.md` | 开启动作参考，识图模型看不到图或识图失败 | 描述写了动作才填，否则 action 留空 |
 | 9 | `ref_both.md` | 两种参考同时开启 | 两部分要求同时满足 |
-| 10 | `persona.md` | 打开「人设匹配」且命中了人设（描述中出现名称 / 别名，或在绘图页选用了人设） | 怎么用人设资料：基础外观全部保留、选造型、专属角色标签、画师偏好 |
-| 10 | `web_character.md` | 打开「联网检索」且查到了角色 | 怎么用角色资料：标准标签、外貌标签取舍、补充说明优先 |
+| 10 | `persona.md` | 打开「人设匹配」且命中了人设（描述中出现名称 / 别名 / 角色库里这个角色的名称，或识别出的角色名模糊比对上，或在绘图页选用了人设） | 怎么用人设资料：基础外观全部保留、选造型、专属角色标签、画师偏好、同一人设多套造型同时出现 |
+| 10 | `web_character.md` | 打开「联网检索」且查到了角色 | 怎么用角色资料：标准标签、外貌标签取舍、造型变体（已选定 / 可选列表）、同一角色多个造型同时出现、补充说明优先 |
 | 10 | `web_artist.md` | 打开「联网检索」且查到了画师 | artist 写标准画师标签（带 @），只写用户提到的画师 |
 | 11 | `tag_reference.md` | 打开「标签参考」且有检索结果 | 怎么用 DanbooruSearch 的标准标签候选 |
 
@@ -49,7 +49,7 @@ prompts/
 | `vision_block.md` | 识图结果块的外框（`{{items}}` = 下面每张图拼起来） |
 | `vision_item.md` | 单张图的识图结果：`{{label}}`（labels.json 里的标题）`{{text}}`（识图模型的原文） |
 | `character_block.md` | 角色资料块的外框（`{{characters}}` = 下面每个角色拼起来） |
-| `character_item.md` | 单个角色的排版：`{{name}}` `{{tag}}` `{{series}}` `{{wiki}}` `{{appearance}}` `{{notes}}`；值为空的行自动去掉 |
+| `character_item.md` | 单个角色的排版：`{{name}}` `{{tag}}` `{{base_tag}}`（用的是造型变体时的本体标签）`{{series}}` `{{outfit}}`（识别出的服装原文）`{{wiki}}` `{{appearance}}` `{{notes}}`（变体时连同本体的补充说明）`{{variants}}`（服装没对上变体时附的可选变体：标签（名称）：特有服装标签，用「；」分隔）；值为空的行自动去掉 |
 | `artist_block.md` / `artist_item.md` | 画师资料块与单个画师的排版：`{{name}}` `{{tag}}` `{{other_names}}` `{{post_count}}` `{{notes}}` |
 | `tag_block.md` | 标签参考块（`{{tags}}` = 「标签（中文）」逗号分隔） |
 | `persona_block.md` | 人设资料块的外框（`{{personas}}` = 下面每个人设拼起来） |
@@ -84,9 +84,9 @@ AI 填写时，上传的图片（灵感图、已开启的人物参考图 / 动�
 
 | 文件 | 内容 |
 |---|---|
-| `extract_system.md` | 系统提示词：找出描述中已有作品的角色（原文写法 / 英文名 / 作品）和用户明确提到的画师（原文写法 / 英文名） |
+| `extract_system.md` | 系统提示词：找出描述中已有作品的角色（原文写法 / 英文名 / 作品 / 服装；同一角色不同服装各列一项）和用户明确提到的画师（原文写法 / 英文名） |
 | `extract_user.md` | 用户消息模板（`{{description}}`；「修改」时 `{{current_character}}` `{{current_artist}}` 为当前字段） |
-| `extract_schema.json` | 输出结构 `{"characters": [{"name", "name_en", "series"}], "artists": [{"name", "name_en"}]}` |
+| `extract_schema.json` | 输出结构 `{"characters": [{"name", "name_en", "series", "outfit"}], "artists": [{"name", "name_en"}]}` |
 
 这一步使用所选模型的最低思考档（能关就关）。
 

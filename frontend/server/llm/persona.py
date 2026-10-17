@@ -100,7 +100,7 @@ def search(q: str, series: str = "", fuzzy: bool = False) -> list[dict]:
     if not q:
         return []
     if fuzzy:
-        cands = danbooru.search_characters(q, series)["items"]
+        cands = research.fuzzy_search(q, series)["items"]
     else:
         cands = danbooru.autocomplete(q)
         if not cands and " " in q:

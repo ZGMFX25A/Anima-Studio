@@ -5,6 +5,7 @@ import { app, on, emit, saveForm, syncAll } from './store.js';
 import { createSide } from './personaside.js';
 import { aiSection, openDanbooru, resetAi } from './personaai.js';
 import { exportCard, exportList, importCards, cardDropTarget } from './personacard.js';
+import { attachArtistPicker } from './artistpick.js';
 
 export const KIND = { original: '原创', existing: '已有角色' };
 const EDIT_KEYS = ['name', 'aliases', 'kind', 'character_tag', 'series', 'count', 'artist', 'groups', 'base_tags',
@@ -249,6 +250,8 @@ function drawRight() {
     return node;
   };
   const input = (k, ph, attrs = {}) => bind(el('input', { type: 'text', value: p[k] ?? '', placeholder: ph, ...attrs }), k);
+  const artistInput = input('artist', '@画师标签');
+  attachArtistPicker(artistInput);
   const area = (k, ph, rows = 3) => bind(el('textarea', { rows, placeholder: ph }, p[k] || ''), k);
   const field = (label, hint, ...nodes) => el('div', { class: 'field' },
     el('label', { class: 'fl' }, el('b', {}, label), hint ? el('i', {}, hint) : null), ...nodes);
@@ -288,7 +291,7 @@ function drawRight() {
           input('series', p.kind === 'original' ? '' : 'blue archive', { disabled: p.kind === 'original' }))),
       el('div', { class: 'grid2' },
         field('主体', '写进 count', input('count', '1girl', { list: 'count-list' })),
-        field('画师偏好', '带 @，未指定画师时使用', input('artist', '@画师标签'))),
+        field('画师偏好', '带 @，未指定画师时使用；输入名字或别名可从画师库选', artistInput)),
       field('分组', '逗号分隔，点下方已有分组快速添加', groups, groupChips)),
 
     el('section', { class: 'psec' },

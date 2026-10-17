@@ -11,6 +11,7 @@ import re
 import sqlite3
 import threading
 import time
+import unicodedata
 
 from .. import config
 from .danbooru import _VARIANT2
@@ -72,8 +73,28 @@ _VARIANT_COLS = (("parent_tag", "TEXT NOT NULL DEFAULT ''"),   # 变体行：本
                  ("variants_at", "REAL"))                         # 变体列表获取时间，NULL = 还没取过
 
 
+def norm(name: str) -> str:
+    """名称映射的比较键：全角 / 半角统一（Ｋ子 = K子）、不分大小写、去掉空格与常见分隔符。"""
+    return re.sub(r"[\s_\-·・.@]+", "", unicodedata.normalize("NFKC", name or "").casefold())
+
+
+def _fz(name: str) -> str:
+    """模糊比对用：在 norm 的基础上再去掉括号。"""
+    return re.sub(r"[()（）\[\]【】「」『』]", "", norm(name))
+
+
+def _covers(q: str, k: str) -> bool:
+    """q 的每个字（按次数）都出现在 k 里。"""
+    pool = list(k)
+    for ch in q:
+        if ch not in pool:
+            return False
+        pool.remove(ch)
+    return True
+
+
 def _migrate(c: sqlite3.Connection) -> None:
-    """旧库补列；库里已有的 本体_(变体)_(作品) 挂到本体下（不联网）。"""
+    """旧库补列；库里已有的 本体_(变体)_(作品) 挂到本体下（不联网）；名称映射按当前的 norm 重算（只改有变化的）。"""
     cols = {r[1] for r in c.execute("PRAGMA table_info(characters)")}
     for col, ddl in _VARIANT_COLS:
         if col not in cols:
@@ -84,15 +105,23 @@ def _migrate(c: sqlite3.Connection) -> None:
         m = _VARIANT2.match(t)
         if m and not t.endswith("_(cosplay)") and f"{m.group(1)}_{m.group(2)}" in tags:
             c.execute("UPDATE characters SET parent_tag = ? WHERE tag = ?", (f"{m.group(1)}_{m.group(2)}", t))
+    for table in ("names", "artist_names"):
+        keys = {r[0] for r in c.execute(f"SELECT norm FROM {table}")}
+        for old, name in c.execute(f"SELECT norm, name FROM {table}").fetchall():
+            new = norm(name)
+            if new == old:
+                continue
+            if new in keys or not new:      # 新写法已有映射（如 Ｋ子 与 K子）：留先有的那条
+                c.execute(f"DELETE FROM {table} WHERE norm = ?", (old,))
+            else:
+                c.execute(f"UPDATE {table} SET norm = ? WHERE norm = ?", (new, old))
+                keys.add(new)
+            keys.discard(old)
 
 
 with _conn() as _c:
     _c.executescript(_SCHEMA)
     _migrate(_c)
-
-
-def norm(name: str) -> str:
-    return re.sub(r"[\s_\-·・.@]+", "", (name or "").casefold())
 
 
 class Library:
@@ -171,6 +200,49 @@ class Library:
         with _lock, _conn() as c:
             return {r[0] for r in c.execute(f"SELECT tag FROM {self.table} WHERE tag IN ({', '.join('?' * len(tags))})",
                                             tags)}
+
+    def fuzzy(self, query: str, accept=None, limit: int = 20) -> list[dict]:
+        """名称映射的模糊比对（本地，不联网），返回 [{row, matched, score}]，好的在前。
+
+        - 中日文：输入的每个字都出现在某个名字里（「睡衣优香」→「早濑优香(睡衣)」、「优香」→「早濑优香」），score > 1；
+        - 英文：输入是某个名字的一部分（「aris maid」→「aris (maid) (blue archive)」），score > 1；
+        - 反过来某个名字包含在输入里（「K子老师」里有「K子」），score < 1，只在前两种都没有时才算。
+        accept(row)：额外筛选（如核对作品）。
+        """
+        q = _fz(query)
+        if len(q) < 2:
+            return []
+        with _lock, _conn() as c:
+            best: dict[int, tuple[float, str]] = {}
+            for k, name, rid in c.execute(f"SELECT norm, name, {self.fk} FROM {self.names_table}"):
+                k = _fz(k)
+                if not k:
+                    continue
+                if (q in k) if q.isascii() else _covers(q, k):
+                    s = 1 + len(q) / len(k)
+                elif len(k) >= 2 and k in q and len(k) / len(q) >= 0.34:
+                    s = len(k) / len(q)
+                else:
+                    continue
+                if s > best.get(rid, (0, ""))[0]:
+                    best[rid] = (s, name)
+            out = []
+            for rid, (s, name) in best.items():
+                row = self._row(c, c.execute(f"SELECT * FROM {self.table} WHERE id = ?", (rid,)).fetchone())
+                if accept is None or accept(row):
+                    out.append({"row": row, "matched": name, "score": s})
+        out.sort(key=lambda x: (-x["score"], -(x["row"]["post_count"] or 0)))
+        if any(x["score"] > 1 for x in out):
+            out = [x for x in out if x["score"] > 1]
+        return out[:limit]
+
+    def variants_of(self, tag: str) -> list[dict]:
+        """本体下已存入的变体（完整资料，图片多的在前）。"""
+        if not self.has_variants:
+            return []
+        with _lock, _conn() as c:
+            return [self._row(c, r) for r in c.execute(
+                f"SELECT * FROM {self.table} WHERE parent_tag = ? ORDER BY post_count DESC", (tag,))]
 
     def search(self, q: str, offset: int = 0, limit: int = 50) -> dict:
         q = (q or "").strip()
