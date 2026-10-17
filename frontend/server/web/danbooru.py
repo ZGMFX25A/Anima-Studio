@@ -108,14 +108,15 @@ def _copyright_hit(tag: str, keys: list[str]) -> bool:
     return any(_same_series(c, k) for c, f in related(tag, "copyright", 5) if f >= 0.3 for k in keys)
 
 
-def _wiki_names(query: str, title_key: str = "", limit: int = 30, parts: tuple[str, ...] = ()) -> list[dict]:
+def _wiki_names(query: str, title_key: str = "", limit: int = 30, parts: tuple[str, ...] = (),
+                category: int = CAT_CHARACTER) -> list[dict]:
     """wiki 别名里包含 query 的角色：只写名字的一部分也能命中（如「晶」→ 清澄晶 → akira_(blue_archive)）。
 
     parts：按顺序都出现即可（「*优香*睡衣*」→ 早濑优香(睡衣)），这时忽略 query。
     每次 2–6 秒；标题过滤与按图片数排序同时用会让 Danbooru 数据库超时（HTTP 500），所以二选一。
     """
     parts = parts or (query,)
-    params = {"search[other_names_match]": "*" + "*".join(parts) + "*", "search[tag][category]": CAT_CHARACTER,
+    params = {"search[other_names_match]": "*" + "*".join(parts) + "*", "search[tag][category]": category,
               "limit": limit, "only": "title,other_names"}
     if title_key:
         params["search[title_ilike]"] = f"*{title_key}*"
@@ -127,8 +128,8 @@ def _wiki_names(query: str, title_key: str = "", limit: int = 30, parts: tuple[s
             for x in _get("/wiki_pages.json", params) or [] if x.get("title")]
 
 
-def _tag_matches(pattern: str, limit: int = 20) -> list[dict]:
-    d = _get("/tags.json", {"search[name_matches]": pattern, "search[category]": CAT_CHARACTER,
+def _tag_matches(pattern: str, limit: int = 20, category: int = CAT_CHARACTER) -> list[dict]:
+    d = _get("/tags.json", {"search[name_matches]": pattern, "search[category]": category,
                             "search[order]": "count", "limit": limit, "only": "name,post_count"}) or []
     return [{"tag": x["name"], "post_count": x.get("post_count") or 0, "matched": ""} for x in d if x.get("name")]
 
@@ -494,6 +495,43 @@ def find_named_outfit(name: str, name_en: str, series: str) -> list[dict]:
             out.append({**c, "series_tag": next((k for k in keys if _same_series(hit, k)), hit)})
             break
     return out
+
+
+def search_outfits(name: str) -> list[dict]:
+    """服装库模糊搜索按名字查 Danbooru（不要求作品）：补全 + 标签名包含名字（英文）+ wiki 别名包含名字（中日文），同时查。
+
+    返回 [{tag, post_count, matched}]（普通标签，图片多的在前）；全部来源都连不上时抛出 WebError。
+    """
+    name = (name or "").strip().replace("*", "")
+    if not name:
+        return []
+    jobs = [lambda: autocomplete(name, category=CAT_GENERAL)]
+    if name.isascii():
+        words = _skey(name)
+        jobs.append(lambda: _tag_matches(f"*{words}*", category=CAT_GENERAL))
+    else:
+        jobs.append(lambda: _wiki_names(name, category=CAT_GENERAL))
+    pool: dict[str, dict] = {}
+    errors = []
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        for f in [ex.submit(j) for j in jobs]:
+            try:
+                for c in f.result():
+                    pool.setdefault(c["tag"], c)
+            except WebError as e:
+                errors.append(e)
+    if errors and len(errors) == len(jobs):
+        raise errors[0]
+    need = [t for t, c in pool.items() if "post_count" not in c]       # wiki 别名的结果没有图片数，补上并核对是普通标签
+    if need:
+        info = _tag_info(need)
+        for t in need:
+            i = info.get(t) or {}
+            if i.get("category") == CAT_GENERAL:
+                pool[t]["post_count"] = i.get("post_count") or 0
+            else:
+                pool.pop(t)
+    return sorted((c for c in pool.values() if c.get("post_count")), key=lambda c: -c["post_count"])[:20]
 
 
 def find_outfit(name: str) -> list[dict]:

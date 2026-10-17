@@ -30,8 +30,8 @@ export const LIB_CONFIG = {
     notesPh: '原样发给 LLM，优先级最高。例如：上衣是露脐短款，袖子是分离袖',
     hint: 'Danbooru 上单独建了标签、几个角色共用的服装（活动服装、偶像团体 / 学校制服等）。和造型变体的区别：变体是角色标签，写进 character；这里是普通标签，写进 appearance。这里只存用到的那套：描述里写了名字的、AI 从可选项里选用的、在这里添加的。描述里写了服装的名字就直接用；对不上名字时把这个作品的服装附给 AI 参考，只有明确指那一套（如「优香的偶像服」「活动里那套」）才用，只说「偶像服」按通用的写。',
     empty: '服装库还是空的。AI 填写用到某套作品服装时会存进来；也可以在上面添加，或用「模糊搜索」列出某个作品的全部服装挑一套。',
-    fuzzyHint: '作品必填；服装名可以不写或只写个说法（如 偶像服），对不上名字时列出这个作品的全部服装，选一个导入',
-    fuzzyNamePh: '服装名或说法（可选），如 偶像服', appHint: '百分比 = 穿这套服装的图片中出现的比例，混有常穿它的角色本身的外貌',
+    fuzzyHint: '服装名（中日英文都行，可以只写一部分）和作品至少填一个；只填作品，或写的是说法（如 偶像服）时列出这个作品的全部服装；选一个导入',
+    fuzzyNamePh: '服装名，如 初星学園 / イタズラ / cheerleader', appHint: '百分比 = 穿这套服装的图片中出现的比例，混有常穿它的角色本身的外貌',
   },
   artists: {
     root: '#panel-artists', title: '画师库', noun: '画师', unit: '个', openEvent: 'artists-open', full: false, manual: true,
@@ -191,12 +191,12 @@ export function createLibrary(kind) {
     const modeSeg = cfg.fuzzy ? el('div', { class: 'seg small' }, ADD_MODES.map(([k, label]) =>
       el('button', { class: st.addMode === k ? 'on' : '', onclick: () => { st.addMode = k; drawList(); } }, label))) : null;
     const fzName = el('input', { type: 'text', placeholder: cfg.fuzzyNamePh, value: st.fz.name });
-    const fzSeries = el('input', { type: 'text', placeholder: cfg.members ? '作品（必填），如 碧蓝档案' : '作品（可选），如 碧蓝档案', value: st.fz.series });
+    const fzSeries = el('input', { type: 'text', placeholder: '作品（可选），如 碧蓝档案', value: st.fz.series });
     const fzBtn = el('button', { class: `btn small accent${st.fz.busy ? ' busy' : ''}`, disabled: st.fz.busy }, '搜索');
     const doSearch = async () => {
       st.fz.name = fzName.value.trim();
       st.fz.series = fzSeries.value.trim();
-      if (cfg.members ? !st.fz.series : !st.fz.name) return toast(cfg.members ? '请填写作品' : '请输入名字', 'warn');
+      if (cfg.members ? !st.fz.name && !st.fz.series : !st.fz.name) return toast(cfg.members ? '请输入服装名或作品' : '请输入名字', 'warn');
       st.fz.busy = true;
       st.fz.res = null;
       drawList();
@@ -276,17 +276,19 @@ export function createLibrary(kind) {
   // 模糊搜索的候选：点一个导入（本体与变体在后台补齐）
   function fuzzyResults(onPick) {
     const fz = st.fz;
-    if (fz.busy) return el('div', { class: 'fz-box muted small' }, cfg.members ? '搜索中…（第一次查这个作品约 2–5 秒）' : '搜索中…（约 3–6 秒）');
+    if (fz.busy) return el('div', { class: 'fz-box muted small' }, cfg.members ? '搜索中…（约 2–5 秒）' : '搜索中…（约 3–6 秒）');
     if (!fz.res) return null;
     const { items, series_tags: keys } = fz.res;
     const narrowed = keys.length && items.some(c => c.series_match);
     const nMatch = items.filter(c => c.series_match).length;
     const sname = sp(keys[keys.length - 1] || '');
     const nHit = items.filter(c => c.exact).length;
-    const outfitSum = () => !items.length ? `没有找到${fz.series && !keys.length ? `，也没认出作品「${fz.series}」（换个写法试试：英文名、日文名）` : ''}`
-      : !fz.name ? `${sname} 的 ${items.length} 套服装，点一个导入`
-        : nHit ? `${nHit} 套名字对得上（排在前面），其余是 ${sname} 的其它服装；点一个导入`
-          : `没有名字对得上「${fz.name}」的，下面是 ${sname} 的全部服装，看简介挑一个导入`;
+    const noSeries = fz.series && !keys.length ? `没认出作品「${fz.series}」（换个写法试试：英文名、日文名）；` : '';
+    const outfitSum = () => !items.length ? `${noSeries}没有找到${fz.name ? `「${fz.name}」，少写几个字或换个写法试试（日文名、英文名）` : ''}`
+      : !fz.name ? `${noSeries}${sname} 的 ${items.length} 套服装，点一个导入`
+        : !keys.length ? `${noSeries}${items.length} 个结果（服装库里的在前），点一个导入`
+          : nHit ? `${nHit} 个名字对得上（排在前面），其余是 ${sname} 的其它服装；点一个导入`
+            : `没有名字对得上「${fz.name}」的，下面是 ${sname} 的全部服装，看简介挑一个导入`;
     return el('div', { class: 'fz-box' },
       fz.res.offline ? el('div', { class: 'small', style: { color: 'var(--warn)' } }, `Danbooru 连不上（${fz.res.offline}），下面只有${cfg.title}里的结果`) : null,
       el('div', { class: 'muted small' },
@@ -300,7 +302,7 @@ export function createLibrary(kind) {
           el('b', { class: 'mono' }, sp(c.tag)),
           c.matched && c.matched !== c.tag && c.matched !== sp(c.tag) ? el('span', { class: 'muted small' }, `← ${c.matched}`) : null,
           el('span', { class: 'grow' }),
-          cfg.members && fz.name && c.exact ? el('span', { class: 'badge small-badge' }, '名字对上') : null,
+          cfg.members && fz.name && keys.length && c.exact ? el('span', { class: 'badge small-badge' }, '名字对上') : null,
           cfg.variants && /^.+?_\(.+\)_\([^()]+\)$/.test(c.tag) ? el('span', { class: 'muted small' }, '造型变体') : null,
           narrowed && c.series_match === false ? el('span', { class: 'muted small' }, '其它作品') : null,
           c.in_library ? el('span', { class: 'badge ok' }, `已在${cfg.title}`) : null,
