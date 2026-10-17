@@ -163,7 +163,8 @@
           </div>
         </div>
         <div class="field">
-          <label class="fl"><b>character</b><i>角色</i><button class="btn ghost small fl-btn" id="persona-pick" type="button" title="用人设的基础外观 + 造型填写 count / character / series / appearance">从人设选择</button></label>
+          <!-- 不用 label：点 label 的任何地方都会触发里面的按钮 -->
+          <div class="fl"><b>character</b><i>角色</i><button class="btn ghost small fl-btn" id="persona-pick" type="button" title="用人设的基础外观 + 造型填写 count / character / series / appearance">从人设选择</button></div>
           <input type="text" data-bind="fields.character" data-field="character" placeholder="yunli (honkai star rail)">
         </div>
         <div class="field">
